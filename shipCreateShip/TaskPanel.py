@@ -1,8 +1,10 @@
 #***************************************************************************
 #*   TaskPanel.py - VOLLSTÄNDIG: Beispielschiffe + Alle Formate            *
-#***************************************************************************
+#*   Version: 2.4 - Mit Solid-Validierung                                  *
+#***************************************************************************/
 
 import os
+import sys
 import FreeCAD as App
 import FreeCADGui as Gui
 from FreeCAD import Units
@@ -13,7 +15,7 @@ from ..shipUtils import Locale
 from ..shipUtils import Selection
 from ..shipUtils import Paths
 
-from .GeometryConverter import GeometryConverter
+from .GeometryConverter import GeometryConverter, check_solid_validity
 
 import Mesh
 import Points
@@ -32,6 +34,7 @@ class TaskPanel:
         self.detected_unit = "m"
         self.scale_factor = 1.0
         
+        # WICHTIG: Initialwerte müssen korrekt sein
         self.real_length_m = 100.0
         self.real_breadth_m = 16.0
         self.real_depth_m = 12.0
@@ -39,15 +42,18 @@ class TaskPanel:
         self.ensure_document()
         
     def ensure_document(self):
+        """Stellt sicher, dass ein Dokument geöffnet ist"""
         if not App.ActiveDocument:
             App.newDocument("ShipDesign")
             App.Console.PrintMessage("✓ Neues Dokument erstellt\n")
     
     def get_document(self):
+        """Gibt aktives Dokument zurück oder erstellt neues"""
         self.ensure_document()
         return App.ActiveDocument
         
     def create_ui(self):
+        """Erstellt die Benutzeroberfläche"""
         form = QtGui.QWidget()
         main_layout = QtGui.QVBoxLayout()
         main_layout.setSpacing(10)
@@ -161,6 +167,7 @@ class TaskPanel:
         selected_layout.setContentsMargins(20, 5, 5, 5)
         
         self.selected_info = QtGui.QLabel()
+        self.selected_info.setWordWrap(True)
         self.selected_refresh = QtGui.QPushButton("🔄 Aktualisieren")
         self.selected_refresh.clicked.connect(self.refresh_selection)
         
@@ -209,6 +216,7 @@ class TaskPanel:
         return form
     
     def on_source_changed(self):
+        """Reagiert auf Änderung der Geometrie-Quelle"""
         self.example_widget.setVisible(self.radio_example.isChecked())
         self.import_widget.setVisible(self.radio_import.isChecked())
         self.selected_widget.setVisible(self.radio_selected.isChecked())
@@ -222,124 +230,123 @@ class TaskPanel:
             return
         
         example = self.example_combo.currentIndex()
-        # Dimensionen der Original-Beispielschiffe
         dimensions = [
             (25.5, 3.5, 1.0),   # Series 60 Slender
-            (4.0, 0.8, 0.4),    # Wigley (klein!)
+            (4.0, 0.8, 0.4),    # Wigley
             (25.5, 3.5, 1.0),   # Series 60 Block
             (4.0, 0.8, 0.4),    # Wigley Katamaran
         ]
         
         L, B, T = dimensions[example]
+        self._updating_ui = True
         self.length_input.setText(f"{L} m")
         self.breadth_input.setText(f"{B} m")
         self.draft_input.setText(f"{T} m")
+        
+        self.real_length_m = L
+        self.real_breadth_m = B
+        self.real_depth_m = T * 2
     
     def on_unit_changed(self, index):
+        """Reagiert auf Änderung der Einheit"""
         if self.original_bbox:
             self.recalculate_dimensions()
     
     def on_dimension_changed(self):
+        """Aktualisiert interne Dimensionen"""
+        if getattr(self, '_updating_ui', False):
+            return
+
         try:
             length_text = self.length_input.text()
             breadth_text = self.breadth_input.text()
             draft_text = self.draft_input.text()
             
-            self.real_length_m = self._parse_length(length_text)
-            self.real_breadth_m = self._parse_length(breadth_text)
-            self.real_depth_m = self._parse_length(draft_text) * 2
+            try:
+                length_qty = Units.parseQuantity(length_text)
+                breadth_qty = Units.parseQuantity(breadth_text)
+                draft_qty = Units.parseQuantity(draft_text)
+                
+                self.real_length_m = float(length_qty.getValueAs('m'))
+                self.real_breadth_m = float(breadth_qty.getValueAs('m'))
+                self.real_depth_m = float(draft_qty.getValueAs('m') * 2)
+                
+            except Exception as parse_err:
+                App.Console.PrintError(f"Parse Fehler: {parse_err}\n")
+                self.real_length_m = self._parse_manual(length_text)
+                self.real_breadth_m = self._parse_manual(breadth_text)
+                self.real_depth_m = self._parse_manual(draft_text) * 2
             
         except Exception as e:
-            pass
+            App.Console.PrintError(f"Fehler in on_dimension_changed: {e}\n")
     
-    def _parse_length(self, text):
+    def _parse_manual(self, text):
+        """Manuelles Parsen als Fallback"""
         if not text:
             return 0.0
-        
-        text = text.strip()
-        
+        text = text.strip().replace(',', '.')
+        for unit in ['m', 'mm', 'km', 'ft', 'in']:
+            if unit in text.lower():
+                text = text.lower().replace(unit, '').strip()
         try:
-            if 'm' in text.lower():
-                return float(text.lower().replace('m', '').strip())
-            else:
-                return float(text)
-        except ValueError:
-            pass
-        
-        try:
-            quantity = Units.parseQuantity(text)
-            return quantity.Value
+            return float(text)
         except:
-            pass
-        
-        try:
-            return Locale.fromString(text)
-        except:
-            pass
-        
-        return 0.0
+            return 0.0
     
     def detect_units(self, bbox):
-        """Erkennt Einheiten"""
+        """Erkennt Einheiten basierend auf Bounding Box"""
         length = bbox.XMax - bbox.XMin
         breadth = bbox.YMax - bbox.YMin
-        
-        App.Console.PrintMessage(f"    Roh-Maße: L={length:.6f}, B={breadth:.6f}\n")
+        depth = bbox.ZMax - bbox.ZMin
         
         unit_idx = self.unit_combo.currentIndex()
         
         if unit_idx == 1:
-            App.Console.PrintMessage("    → Manuell: MILLIMETER\n")
             return "mm", 1000.0
-        
         elif unit_idx == 2:
-            App.Console.PrintMessage("    → Manuell: METER\n")
             return "m", 1.0
         
         # Auto-Erkennung
-        if 1.0 <= length <= 1000.0 and 0.1 <= breadth <= 100.0:
+        if 10.0 <= length <= 500.0 and 1.0 <= breadth <= 100.0:
             ratio = length / breadth if breadth > 0 else 0
             if 2.0 < ratio < 20.0:
-                App.Console.PrintMessage(f"    → Auto: METER (L={length:.1f}m, L/B={ratio:.1f})\n")
                 return "m", 1.0
         
         if length > 10000:
-            App.Console.PrintMessage(f"    → Auto: MILLIMETER (L={length:.0f} > 10000)\n")
             return "mm", 1000.0
         
-        if length < 0.1:
-            App.Console.PrintMessage(f"    → Auto: METER (L={length:.3f} < 0.1)\n")
-            return "m", 1.0
-        
-        App.Console.PrintMessage(f"    → Auto: METER (Default)\n")
         return "m", 1.0
     
     def recalculate_dimensions(self):
+        """Berechnet Dimensionen basierend auf erkannter Einheit"""
         if not self.original_bbox:
             return
         
-        einheit, scale = self.detect_units(self.original_bbox)
+        length_raw = self.original_bbox.XMax - self.original_bbox.XMin
+        breadth_raw = self.original_bbox.YMax - self.original_bbox.YMin
+        depth_raw = self.original_bbox.ZMax - self.original_bbox.ZMin
         
-        if einheit == "m":
-            length_m = self.original_bbox.XMax - self.original_bbox.XMin
-            breadth_m = self.original_bbox.YMax - self.original_bbox.YMin
-            depth_m = self.original_bbox.ZMax - self.original_bbox.ZMin
+        if self.detected_unit == "m":
+            length_m = length_raw
+            breadth_m = breadth_raw
+            depth_m = depth_raw
         else:
-            length_m = (self.original_bbox.XMax - self.original_bbox.XMin) / scale
-            breadth_m = (self.original_bbox.YMax - self.original_bbox.YMin) / scale
-            depth_m = (self.original_bbox.ZMax - self.original_bbox.ZMin) / scale
+            length_m = length_raw / 1000.0
+            breadth_m = breadth_raw / 1000.0
+            depth_m = depth_raw / 1000.0
         
-        self.length_input.setText(f"{length_m:.2f} m")
-        self.breadth_input.setText(f"{breadth_m:.2f} m")
-        self.draft_input.setText(f"{depth_m * 0.5:.2f} m")
+        self.real_length_m = float(length_m)
+        self.real_breadth_m = float(breadth_m)
+        self.real_depth_m = float(depth_m)
         
-        self.real_length_m = length_m
-        self.real_breadth_m = breadth_m
-        self.real_depth_m = depth_m
+        self._updating_ui = True
+        self.length_input.setText(f"{self.real_length_m:.2f} m")
+        self.breadth_input.setText(f"{self.real_breadth_m:.2f} m")
+        self.draft_input.setText(f"{self.real_depth_m * 0.5:.2f} m")
         
-        self.unit_info.setText(f"Erkannt: {einheit} → L={length_m:.2f}m, B={breadth_m:.2f}m")
-        
-        App.Console.PrintMessage(f"  Dimensionen: L={length_m:.2f}m, B={breadth_m:.2f}m, D={depth_m:.2f}m\n")
+        self.unit_info.setText(
+            f"Erkannt: {self.detected_unit} → "
+            f"L={self.real_length_m:.2f}m, B={self.real_breadth_m:.2f}m")
     
     def import_geometry(self):
         """Importiert verschiedene Formate"""
@@ -376,23 +383,34 @@ class TaskPanel:
             App.Console.PrintError(f"Import-Fehler: {e}\n")
             import traceback
             traceback.print_exc()
-    
+            
     def _import_stl(self, file_path):
-        """Importiert STL"""
+        """Importiert STL Datei - MIT VALIDIERUNG"""
         doc = self.get_document()
         
         mesh = Mesh.Mesh()
         mesh.read(file_path)
         
-        App.Console.PrintMessage(f"→ STL: {mesh.CountPoints} Punkte\n")
+        original_facets = mesh.CountFacets
+        App.Console.PrintMessage(f"→ STL: {mesh.CountPoints} Punkte, {original_facets} Facets\n")
         
+        # Vereinfachung
+        mesh.harmonizeNormals()
+        if original_facets > 5000:
+            mesh.decimate(0.1, 0.85)
+            App.Console.PrintMessage(
+                f"  Dezimiert: {original_facets} → {mesh.CountFacets} Facets\n")
+        
+        # WICHTIG: Original Bounding Box VOR jeder Transformation speichern!
         self.original_bbox = mesh.BoundBox
+        
+        # Einheit erkennen
         self.detected_unit, self.scale_factor = self.detect_units(self.original_bbox)
         self.recalculate_dimensions()
         
         mesh_copy = mesh.copy()
         
-        # WICHTIG: Skalieren wenn in Metern!
+        # Skalieren wenn in Metern
         if self.detected_unit == "m":
             scale_matrix = App.Matrix()
             scale_matrix.scale(1000.0, 1000.0, 1000.0)
@@ -423,20 +441,29 @@ class TaskPanel:
         self.imported_geometry = mesh_obj
         self.geometry_type = "mesh"
         
-        # Zu Solid konvertieren
+        # Zu Solid konvertieren MIT NEUEM CONVERTER
         converter = GeometryConverter()
         solid_obj = converter.convert_mesh_to_solid(mesh_obj)
         
         if solid_obj:
-            self.converted_solid = solid_obj
-            self.geometry_type = "solid"
+            # VALIDIERUNG
+            is_valid, msg = check_solid_validity(solid_obj)
+            if is_valid:
+                App.Console.PrintMessage(f"✓ Solid validiert: {msg}\n")
+                self.converted_solid = solid_obj
+                self.geometry_type = "solid"
+            else:
+                App.Console.PrintError(f"✗ Solid ungültig: {msg}\n")
+                App.Console.PrintMessage("→ Verwende Mesh-Proxy\n")
+                # Fallback: Verwende Mesh
+                self.converted_solid = mesh_obj
         else:
             self.converted_solid = mesh_obj
         
         doc.recompute()
-    
+        
     def _import_brep(self, file_path):
-        """Importiert IGES/STEP"""
+        """Importiert IGES/STEP Datei"""
         doc = self.get_document()
         
         App.Console.PrintMessage(f"→ IGES/STEP Import...\n")
@@ -450,6 +477,15 @@ class TaskPanel:
         if not shape.Solids:
             raise Exception("Keine Solids gefunden")
         
+        self.original_bbox = shape.BoundBox
+        self.detected_unit, self.scale_factor = self.detect_units(self.original_bbox)
+        
+        final_shape = shape.copy()
+        
+        if self.detected_unit == "m":
+            final_shape.scale(1000.0)
+            App.Console.PrintMessage(f"  → Skaliert: m → mm (×1000)\n")
+        
         # Alte entfernen
         if self.imported_geometry and self.imported_geometry in doc.Objects:
             doc.removeObject(self.imported_geometry.Name)
@@ -457,23 +493,14 @@ class TaskPanel:
             doc.removeObject(self.converted_solid.Name)
         
         solid_obj = doc.addObject("Part::Feature", "Imported_Hull")
-        solid_obj.Shape = shape
+        solid_obj.Shape = final_shape
         solid_obj.Label = f"Hull_{os.path.basename(file_path)}"
         
         self.imported_geometry = solid_obj
         self.converted_solid = solid_obj
         self.geometry_type = "solid"
         
-        # Dimensionen
-        self.original_bbox = shape.BoundBox
-        self.detected_unit, self.scale_factor = self.detect_units(self.original_bbox)
         self.recalculate_dimensions()
-        
-        # Skalieren und zentrieren
-        if self.detected_unit == "m":
-            solid_obj.Shape = shape.copy()
-            solid_obj.Shape.scale(1000.0)
-            App.Console.PrintMessage("  → Skaliert: m → mm\n")
         
         if self.auto_center.isChecked():
             bbox = solid_obj.Shape.BoundBox
@@ -484,143 +511,136 @@ class TaskPanel:
         
         doc.recompute()
 
-        
     def _import_gf(self, file_path):
-            """Importiert GF/GF1 Datei (strukturiert mit Spanten)"""
-            doc = self.get_document()
-            
-            App.Console.PrintMessage(f"→ GF/GF1 Import...\n")
-            
-            # Importiere GF_Parser
-            from .GF_Parser import parse_gf_file
-            
-            # Parse GF-Datei
-            solid_obj, length_m, breadth_m, depth_m = parse_gf_file(file_path, doc)
-            
-            if not solid_obj:
-                raise Exception("GF-Parsing fehlgeschlagen")
-            
-            # Alte entfernen
-            if self.imported_geometry and self.imported_geometry in doc.Objects:
-                doc.removeObject(self.imported_geometry.Name)
-            if self.converted_solid and self.converted_solid in doc.Objects:
-                doc.removeObject(self.converted_solid.Name)
-            
-            self.imported_geometry = solid_obj
-            self.converted_solid = solid_obj
-            self.geometry_type = "solid"
-            
-            # Dimensionen setzen
-            self.real_length_m = length_m
-            self.real_breadth_m = breadth_m
-            self.real_depth_m = depth_m
-            
-            # UI aktualisieren
-            self.length_input.setText(f"{length_m:.2f} m")
-            self.breadth_input.setText(f"{breadth_m:.2f} m")
-            self.draft_input.setText(f"{depth_m * 0.5:.2f} m")
-            
-            self.unit_info.setText(
-                f"GF-Datei: L={length_m:.2f}m, B={breadth_m:.2f}m, H={depth_m:.2f}m")
-            
-            # Zentrieren (GF ist schon in mm)
-            if self.auto_center.isChecked():
-                bbox = solid_obj.Shape.BoundBox
-                shift_x = -(bbox.XMax + bbox.XMin) / 2
-                shift_y = -(bbox.YMax + bbox.YMin) / 2
-                solid_obj.Placement.Base = App.Vector(shift_x, shift_y, 0)
-                App.Console.PrintMessage(f"  → Zentriert\n")
-            
-            doc.recompute()
-
-
+        """Importiert GF/GF1 Datei"""
+        doc = self.get_document()
+        
+        App.Console.PrintMessage(f"→ GF/GF1 Import...\n")
+        
+        from .GF_Parser import parse_gf_file
+        
+        solid_obj, length_m, breadth_m, depth_m = parse_gf_file(file_path, doc)
+        
+        if not solid_obj:
+            raise Exception("GF-Parsing fehlgeschlagen")
+        
+        if self.imported_geometry and self.imported_geometry in doc.Objects:
+            doc.removeObject(self.imported_geometry.Name)
+        if self.converted_solid and self.converted_solid in doc.Objects:
+            doc.removeObject(self.converted_solid.Name)
+        
+        self.imported_geometry = solid_obj
+        self.converted_solid = solid_obj
+        self.geometry_type = "solid"
+        
+        self.original_bbox = solid_obj.Shape.BoundBox
+        
+        self.real_length_m = length_m
+        self.real_breadth_m = breadth_m
+        self.real_depth_m = depth_m
+        self.detected_unit = "m"
+        
+        self._updating_ui = True
+        self.length_input.setText(f"{length_m:.2f} m")
+        self.breadth_input.setText(f"{breadth_m:.2f} m")
+        self.draft_input.setText(f"{depth_m * 0.5:.2f} m")
+        
+        self.unit_info.setText(
+            f"GF-Datei: L={length_m:.2f}m, B={breadth_m:.2f}m, H={depth_m:.2f}m")
+        
+        if self.auto_center.isChecked():
+            bbox = solid_obj.Shape.BoundBox
+            shift_x = -(bbox.XMax + bbox.XMin) / 2
+            shift_y = -(bbox.YMax + bbox.YMin) / 2
+            solid_obj.Placement.Base = App.Vector(shift_x, shift_y, 0)
+            App.Console.PrintMessage(f"  → Zentriert\n")
+        
+        doc.recompute()
     
     def refresh_selection(self):
-        solids = Selection.get_solids()
+        """Aktualisiert die Anzeige der ausgewählten Objekte"""
+        try:
+            solids = Selection.get_solids()
+        except Exception as e:
+            self.selected_info.setText(f"⚠ Fehler: {str(e)}")
+            self.selected_info.setStyleSheet("color: red;")
+            return
         
         if solids:
-            names = [s.Label for s in solids[:3]]
+            names = []
+            for s in solids[:3]:
+                if hasattr(s, 'Label'):
+                    names.append(s.Label)
+                elif hasattr(s, 'Name'):
+                    names.append(s.Name)
+                else:
+                    names.append(type(s).__name__)
+            
             self.selected_info.setText(
                 f"✓ <b>{len(solids)} Objekt(e)</b><br>{', '.join(names)}")
             self.selected_info.setStyleSheet("color: green;")
         else:
             self.selected_info.setText("⚠ <i>Keine Solids ausgewählt</i>")
             self.selected_info.setStyleSheet("color: orange;")
-
-        
+    
     def accept(self):
         """Erstellt Schiffsinstanz"""
         solids = None
         
         self.ensure_document()
         
+        App.Console.PrintMessage(f"DEBUG accept():\n")
+        App.Console.PrintMessage(f"  L={self.real_length_m}m, B={self.real_breadth_m}m, T={self.real_depth_m*0.5}m\n")
+        
         try:
             if self.radio_example.isChecked():
-                # Beispielschiff laden
                 solids = self.load_example_ship()
-                
                 if not solids:
                     QtGui.QMessageBox.critical(None, "Fehler",
                         "Beispielschiff konnte nicht geladen werden!")
                     return False
                 
-                # WICHTIG: Beispielschiffe haben bereits eine Ship Instance!
-                # Prüfe ob schon eine existiert
-                existing_ships = []
-                for obj in App.ActiveDocument.Objects:
-                    if hasattr(obj, 'Length') and hasattr(obj, 'Breadth'):
-                        existing_ships.append(obj)
-                
-                if existing_ships:
-                    # Beispielschiff ist komplett - verwende existierende Ship Instance
-                    App.Console.PrintMessage(
-                        f"✓ Beispielschiff geladen mit Ship Instance: {existing_ships[0].Label}\n")
-                    Gui.Control.closeDialog()
-                    return True
-                
-                # Falls keine Ship Instance existiert, erstelle eine
-                # (sollte normalerweise nicht vorkommen bei Beispielschiffen)
-                App.Console.PrintWarning("⚠ Beispielschiff hat keine Ship Instance - erstelle neue\n")
-                
             elif self.radio_import.isChecked():
-                # Importierte Geometrie
                 if not self.converted_solid:
                     QtGui.QMessageBox.warning(None, "Kein Solid",
                         "Bitte importieren Sie zuerst eine Geometrie!")
                     return False
                 
-                if hasattr(self.converted_solid, 'Shape') and self.converted_solid.Shape:
-                    solids = [self.converted_solid.Shape]
+                # KORREKTUR: Prüfe ob wir ein Document-Objekt haben
+                if hasattr(self.converted_solid, 'Shape'):
+                    # Validierung vor dem Weitergeben
+                    shape = self.converted_solid.Shape
+                    if not shape.isValid():
+                        QtGui.QMessageBox.warning(None, "Ungültige Geometrie",
+                            "Das Solid ist ungültig. Bitte importieren Sie erneut.")
+                        return False
+                    solids = [shape]
                 else:
                     solids = [self.converted_solid]
                     
             elif self.radio_selected.isChecked():
-                # Ausgewähltes Objekt
                 solids = Selection.get_solids()
                 if not solids:
                     QtGui.QMessageBox.warning(None, "Keine Auswahl",
                         "Bitte wählen Sie Solids aus!")
                     return False
             
-            # Wenn wir bis hierher kommen, brauchen wir eine neue Ship Instance
             if not solids:
-                QtGui.QMessageBox.critical(None, "Fehler",
-                    "Keine gültige Geometrie!")
+                QtGui.QMessageBox.critical(None, "Fehler", "Keine gültige Geometrie!")
                 return False
             
-            # Ship erwartet mm
-            length_mm = self.real_length_m * 1000.0
-            breadth_mm = self.real_breadth_m * 1000.0
-            draft_mm = (self.real_depth_m * 0.5) * 1000.0
-            
-            App.Console.PrintMessage(f"→ Erstelle Schiff:\n")
-            App.Console.PrintMessage(f"   L={length_mm}mm ({self.real_length_m}m)\n")
-            App.Console.PrintMessage(f"   B={breadth_mm}mm ({self.real_breadth_m}m)\n")
-            App.Console.PrintMessage(f"   T={draft_mm}mm ({self.real_depth_m * 0.5}m)\n")
-            
+            # NEU - durch Quantity-Objekte ersetzen:
+            from FreeCAD import Units
+
+            L = Units.parseQuantity(f"{self.real_length_m} m")
+            B = Units.parseQuantity(f"{self.real_breadth_m} m")
+            T = Units.parseQuantity(f"{self.real_depth_m * 0.5} m")
+
+            App.Console.PrintMessage(f"→ Erstelle Schiff: L={L}, B={B}, T={T}\n")
+
             Gui.Control.closeDialog()
-            
-            ship = Tools.createShip(solids, length_mm, breadth_mm, draft_mm)
+
+            ship = Tools.createShip(solids, L, B, T)
             
             if ship:
                 App.Console.PrintMessage(f"✓ Schiff erstellt: {ship.Name}\n")
@@ -634,12 +654,11 @@ class TaskPanel:
             traceback.print_exc()
             QtGui.QMessageBox.critical(None, "Fehler", str(e))
             return False
-
     
     def reject(self):
+        """Dialog abbrechen"""
         return True
     
-
     def load_example_ship(self):
         """Lädt Original-Beispielschiff"""
         example_idx = self.example_combo.currentIndex()
@@ -653,35 +672,25 @@ class TaskPanel:
             "wigley_katamaran.fcstd"
         ]
         
+        if example_idx >= len(files):
+            example_idx = 0
+            
         file_path = path + files[example_idx]
         
         App.Console.PrintMessage(f"→ Lade Beispielschiff: {files[example_idx]}\n")
         
         if not os.path.exists(file_path):
             App.Console.PrintError(f"✗ Datei nicht gefunden: {file_path}\n")
-            QtGui.QMessageBox.critical(None, "Fehler",
-                f"Beispielschiff nicht gefunden:\n{file_path}")
             return None
         
-        new_doc = App.open(file_path)
-        App.ActiveDocument.recompute()
+        try:
+            new_doc = App.open(file_path)
+            App.ActiveDocument.recompute()
+        except Exception as e:
+            App.Console.PrintError(f"✗ Fehler beim Öffnen: {e}\n")
+            return None
 
-        # ===== DEBUG: Zeige ALLE Objekte =====
-        App.Console.PrintMessage("\n=== DEBUG: Objekte im Dokument ===\n")
-        for obj in App.ActiveDocument.Objects:
-            App.Console.PrintMessage(f"  {obj.Name:20s} | {obj.Label:20s} | TypeId: {obj.TypeId}\n")
-            
-            # Prüfe verschiedene Attribute
-            if hasattr(obj, 'Length'):
-                App.Console.PrintMessage(f"    → Hat 'Length' Attribut - IST SHIP!\n")
-            if hasattr(obj, 'Breadth'):
-                App.Console.PrintMessage(f"    → Hat 'Breadth' Attribut - IST SHIP!\n")
-        App.Console.PrintMessage("=== ENDE DEBUG ===\n\n")
-        # ===== ENDE DEBUG =====
-
-            
-        
-        solids = []  # ← WICHTIG: Liste initialisieren!
+        solids = []
         
         for obj in App.ActiveDocument.Objects:
             if hasattr(obj, 'Shape') and obj.Shape and obj.Shape.Solids:
@@ -711,7 +720,6 @@ class TaskPanel:
         else:
             App.Console.PrintWarning("⚠ Keine Solids gefunden\n")
             return None
-
     
     def needsFullSpace(self): 
         return True
@@ -727,6 +735,7 @@ class TaskPanel:
 
 
 def createTask():
+    """Erstellt und zeigt den Task Panel an"""
     panel = TaskPanel()
     Gui.Control.showDialog(panel)
     return panel

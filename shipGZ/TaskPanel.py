@@ -1,24 +1,7 @@
 #***************************************************************************
-#*                                                                         *
 #*   Copyright (c) 2011, 2016 Jose Luis Cercos Pita <jlcercos@gmail.com>   *
 #*   Modified to support new LoadCondition format                          *
-#*                                                                         *
-#*   This program is free software; you can redistribute it and/or modify  *
-#*   it under the terms of the GNU Lesser General Public License (LGPL)    *
-#*   as published by the Free Software Foundation; either version 2 of     *
-#*   the License, or (at your option) any later version.                   *
-#*   for detail see the LICENCE text file.                                 *
-#*                                                                         *
-#*   This program is distributed in the hope that it will be useful,       *
-#*   but WITHOUT ANY WARRANTY; without even the implied warranty of        *
-#*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the         *
-#*   GNU Library General Public License for more details.                  *
-#*                                                                         *
-#*   You should have received a copy of the GNU Library General Public     *
-#*   License along with this program; if not, write to the Free Software   *
-#*   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  *
-#*   USA                                                                   *
-#*                                                                         *
+#*   FIXED: lc_info now reads GM, KM, VCG directly from spreadsheet       *
 #***************************************************************************
 
 import os
@@ -39,41 +22,85 @@ class TaskPanel:
                                "../resources/ui/",
                                "TaskPanel_shipGZ.ui")
         self.form = Gui.PySideUic.loadUi(self.ui)
+        self.ship = None
+        self.lc = None
+        self.running = False
 
-
+    # ------------------------------------------------------------------ #
+    # accept                                                               #
+    # ------------------------------------------------------------------ #
     def accept(self):
         if self.lc is None:
             return False
         self.form.group_pbar.show()
         self.save()
 
-        roll = Units.parseQuantity(self.form.angle.text())
-        n_points = self.form.n_points.value()
-        var_trim = self.form.var_trim.isChecked()
+        roll_max  = Units.parseQuantity(self.form.angle.text())
+        n_points  = self.form.n_points.value()
+        var_trim  = self.form.var_trim.isChecked()
         self.form.pbar.setMinimum(0)
         self.form.pbar.setMaximum(n_points)
         self.form.pbar.setValue(0)
 
-        # NEW FORMAT: Read data from LoadCondition spreadsheet
+        # ---------------------------------------------------------------- #
+        # Read LoadCondition data                                           #
+        # ---------------------------------------------------------------- #
+        use_new_format = False
+        W = None
+        COG = None
+        total_mass_kg = cog_x = cog_y = cog_z = 0.0
+
+        # --- Spreadsheet values read once here, passed to lc_info --------
+        gm_from_sheet  = None   # G4  (KM - KG, free-surface corrected)
+        km_from_sheet  = None   # F4  (metacentric height above keel)
+        vcg_from_sheet = None   # G5  (VCG = KG)
+
         try:
-            # Try to read from new format (fixed cells)
+            # New-format: plain numbers in fixed cells
             total_mass_kg = float(self.lc.get('D4'))
             W = Units.parseQuantity("{} kg".format(total_mass_kg)) * Tools.G
-            
-            cog_x = float(self.lc.get('E5'))
-            cog_y = float(self.lc.get('F5'))
-            cog_z = float(self.lc.get('G5'))
-            COG = Vector(cog_x, cog_y, cog_z)
-            
-            App.Console.PrintMessage("Using NEW LoadCondition format:\n")
-            App.Console.PrintMessage("  Mass: {} kg, COG: ({:.3f}, {:.3f}, {:.3f}) m\n".format(
-                total_mass_kg, cog_x, cog_y, cog_z))
-            
+
+            COG = Tools._parse_cog_from_sheet(self.lc)
+
+            # Keep raw metre values for the SOLAS report
+            cog_x = COG.x / 1000.0   # mm → m
+            cog_y = COG.y / 1000.0
+            cog_z = COG.z / 1000.0
+
+            # --- Read stability values directly from spreadsheet ----------
+            # G4 = GM (corrected), F4 = KM, G5 = VCG (= KG)
+            try:
+                gm_from_sheet = float(self.lc.get('G4'))
+                App.Console.PrintMessage(
+                    "GM read from spreadsheet G4: {:.3f} m\n".format(gm_from_sheet))
+            except Exception as e:
+                App.Console.PrintWarning(
+                    "Could not read GM from G4: {} – will use curve fit fallback\n".format(e))
+
+            try:
+                km_from_sheet = float(self.lc.get('F4'))
+            except Exception:
+                km_from_sheet = None
+
+            try:
+                vcg_from_sheet = float(self.lc.get('G5'))
+            except Exception:
+                vcg_from_sheet = cog_z   # fallback: use COG z
+
+            App.Console.PrintMessage(
+                "LoadCondition (new format):\n"
+                "  Mass: {:.1f} kg  COG: ({:.3f}, {:.3f}, {:.3f}) m\n"
+                "  KM: {}  GM: {}  VCG/KG: {}\n".format(
+                    total_mass_kg, cog_x, cog_y, cog_z,
+                    "{:.3f} m".format(km_from_sheet) if km_from_sheet is not None else "n/a",
+                    "{:.3f} m".format(gm_from_sheet) if gm_from_sheet is not None else "n/a",
+                    "{:.3f} m".format(vcg_from_sheet) if vcg_from_sheet is not None else "n/a",
+                ))
             use_new_format = True
-            
+
         except Exception as e:
-            # Fallback to old format
-            App.Console.PrintWarning("Cannot read new format, trying old format: {}\n".format(str(e)))
+            App.Console.PrintWarning(
+                "New format not readable, trying legacy format: {}\n".format(e))
             try:
                 COG, W = Tools.weights_cog(self.weights)
                 TW = Units.parseQuantity("0 kg")
@@ -83,180 +110,201 @@ class TaskPanel:
                     VOLS.append(vol)
                     TW += vol * t[1]
                 TW = TW * Tools.G
-                use_new_format = False
             except Exception as e2:
-                App.Console.PrintError("Error reading LoadCondition: {}\n".format(str(e2)))
+                App.Console.PrintError(
+                    "Error reading LoadCondition: {}\n".format(e2))
                 return False
 
-        # Start traversing the queried angles
-        self.loop = QtCore.QEventLoop()
-        self.timer = QtCore.QTimer()
-        self.timer.setSingleShot(True)
-        QtCore.QObject.connect(self.timer,
-                               QtCore.SIGNAL("timeout()"),
-                               self.loop,
-                               QtCore.SLOT("quit()"))
+        # ---------------------------------------------------------------- #
+        # Compute all points first (no plot updates during loop)           #
+        # ---------------------------------------------------------------- #
         self.running = True
-        rolls = []
-        gzs = []
+
+        rolls  = []
+        gzs    = []
         drafts = []
-        trims = []
-        plt = None
-        
+        trims  = []
+        displacements = []
+
         for i in range(n_points):
             App.Console.PrintMessage("{0} / {1}\n".format(i + 1, n_points))
             self.form.pbar.setValue(i + 1)
-            rolls.append(roll * i / float(n_points - 1))
-            
-            # Use appropriate solve function based on format
+            roll_val = roll_max * i / float(max(n_points - 1, 1))
+            rolls.append(roll_val)
+
             if use_new_format:
-                point = Tools.solve_point_direct(W, COG, self.ship, rolls[-1], var_trim)
+                point = Tools.solve_point_direct(
+                    W, COG, self.ship, roll_val, var_trim)
+
+                if point is None:
+                    gzs.append(Units.Quantity(0.0, Units.Length))
+                    drafts.append(Units.Quantity(0.0, Units.Length))
+                    trims.append(Units.parseQuantity("0 deg"))
+                    displacements.append(0.0)
+                else:
+                    gzs.append(point[0])
+                    drafts.append(point[1])
+                    trims.append(point[2])
+                    displacements.append(point[3] if len(point) >= 4 else 0.0)
             else:
-                point = Tools.solve_point(W, COG, TW, VOLS, self.ship, self.tanks,
-                                          rolls[-1], var_trim)
-            
-            if point is None:
-                gzs.append(Units.Quantity(0, Units.Length))
-                drafts.append(Units.Quantity(0, Units.Length))
-                trims.append(Units.Quantity(0, Units.Angle))
-            else:
-                gzs.append(point[0])
-                drafts.append(point[1])
-                trims.append(point[2])
-            
-            if plt is None:
-                # Create lc_info for SOLAS analysis
-                lc_info = {
-                    'name': self.lc.Label,
-                    'mass': total_mass_kg,
-                    'cog': [cog_x, cog_y, cog_z],
-                    'ship_label': self.ship.Label if self.ship else 'Unknown',
-                    'use_new_format': use_new_format
-                }
-                plt = PlotAux.Plot(rolls, gzs, drafts, trims, lc_info)
-            else:
-                plt.update(rolls, gzs, drafts, trims)
-            
-            self.timer.start(0.0)
-            self.loop.exec_()
-            if(not self.running):
-                break
-        
-        # Perform SOLAS analysis after all points are calculated
-        if use_new_format and gzs and all(gz.Value > 0 for gz in gzs if hasattr(gz, 'Value')):
+                point = Tools.solve_point(
+                    W, COG, TW, VOLS,
+                    self.ship, self.tanks, roll_val, var_trim)
+
+                if point is None:
+                    gzs.append(Units.Quantity(0.0, Units.Length))
+                    drafts.append(Units.Quantity(0.0, Units.Length))
+                    trims.append(Units.parseQuantity("0 deg"))
+                    displacements.append(0.0)
+                else:
+                    gzs.append(point[0])
+                    drafts.append(point[1])
+                    trims.append(point[2])
+                    displacements.append(0.0)
+
+            QtCore.QCoreApplication.processEvents()
+
+        # ---------------------------------------------------------------- #
+        # All data computed – create plot and spreadsheet once             #
+        # ---------------------------------------------------------------- #
+        App.Console.PrintMessage(
+            "\n--- All data computed, creating plot and spreadsheet ---\n")
+
+        lc_info = {
+            # identification
+            'name':           self.lc.Label,
+            'vessel':         self.ship.Label if self.ship else 'Unknown',
+            'load_case':      self.lc.Label,
+            # weight / geometry
+            'displacement':   round(total_mass_kg / 1000.0, 2),   # tonnes
+            'vcg':            round(vcg_from_sheet, 3) if vcg_from_sheet is not None else '-',
+            'kg':             round(vcg_from_sheet, 3) if vcg_from_sheet is not None else '-',
+            'km':             round(km_from_sheet, 3)  if km_from_sheet  is not None else '-',
+            # THE KEY VALUE: GM read directly from spreadsheet cell G4
+            'gm':             gm_from_sheet,
+            # raw data (for internal use)
+            'mass':           total_mass_kg,
+            'cog':            [cog_x, cog_y, cog_z],
+            'ship_label':     self.ship.Label if self.ship else 'Unknown',
+            'use_new_format': use_new_format,
+        }
+
+        plt = PlotAux.Plot(rolls, gzs, drafts, trims, lc_info)
+
+        if use_new_format and displacements and any(d > 0 for d in displacements):
+            plt.set_displacement(displacements)
+
+        # ---------------------------------------------------------------- #
+        # SOLAS post-processing                                            #
+        # ---------------------------------------------------------------- #
+        if use_new_format and gzs:
             try:
-                # Call the enhanced gz() function that returns SOLAS data
-                points = []
-                for gz_val, draft, trim_angle in zip(gzs, drafts, trims):
-                    points.append((gz_val, draft, trim_angle))
-                
-                # Perform SOLAS analysis
-                solas_data = Tools.analyze_solas_stability(points, rolls, self.ship, COG)
-                
-                # Add LoadCondition info to solas_data
+                points_with_disp = list(zip(gzs, drafts, trims, displacements))
+
+                # Pass gm_from_sheet so Tools does not recompute via curve fit
+                solas_data = Tools.analyze_solas_stability(
+                    points_with_disp, rolls, self.ship, COG,
+                    gm_from_sheet=gm_from_sheet)
+
                 solas_data.update({
-                    'lc_label': self.lc.Label,
-                    'ship_label': self.ship.Label,
+                    'lc_label':      self.lc.Label,
+                    'ship_label':    self.ship.Label,
                     'total_mass_kg': total_mass_kg,
-                    'cog_x': cog_x,
-                    'cog_y': cog_y,
-                    'cog_z': cog_z
+                    'cog_x':         COG.x,
+                    'cog_y':         COG.y,
+                    'cog_z':         COG.z,
                 })
-                
-                # Print SOLAS report
+
                 Tools.print_solas_report(solas_data)
-                
-                # Export SOLAS results to spreadsheet if plt has sheet
+
                 if hasattr(plt, 'sheet') and plt.sheet:
-                    self.export_solas_to_spreadsheet(plt.sheet, solas_data)
-                    
+                    self._export_solas_to_spreadsheet(plt.sheet, solas_data)
+
             except Exception as e:
-                App.Console.PrintWarning(f"SOLAS analysis failed: {e}\n")
+                App.Console.PrintWarning(
+                    "SOLAS analysis failed: {}\n".format(e))
                 import traceback
                 traceback.print_exc()
-        
+
+        self.form.group_pbar.hide()
         return True
-    
-    def export_solas_to_spreadsheet(self, sheet, solas_data):
-        """Export SOLAS results to existing spreadsheet"""
+
+    # ------------------------------------------------------------------ #
+    # _export_solas_to_spreadsheet                                        #
+    # ------------------------------------------------------------------ #
+    def _export_solas_to_spreadsheet(self, sheet, solas_data):
+        """Write SOLAS results to column H of the results spreadsheet."""
         try:
-            # Start at column F to avoid overwriting original data
-            col_offset = 6  # Column F
-            
-            # Header - keine Formeln, nur Text
-            sheet.set(f"F1", "SOLAS/IMO STABILITY ANALYSIS")
-            
-            # Basic info
-            sheet.set(f"F3", f"Ship: {solas_data.get('ship_label', 'N/A')}")
-            sheet.set(f"F4", f"Load Condition: {solas_data.get('lc_label', 'N/A')}")
-            sheet.set(f"F5", f"Total Mass: {solas_data.get('total_mass_kg', 0):.1f} kg")
-            
-            # Stability parameters
-            sheet.set(f"F7", "STABILITY PARAMETERS:")
-            sheet.set(f"F8", f"Max GZ: {solas_data.get('max_gz', 0):.3f} m")
-            sheet.set(f"F9", f"Angle of Max GZ: {solas_data.get('max_gz_angle', 0):.1f} °")
-            sheet.set(f"F10", f"Vanishing Angle: {solas_data.get('vanishing_angle', 0):.1f} °")
-            sheet.set(f"F11", f"GZ at 30°: {solas_data.get('gz_at_30', 0):.3f} m")
-            sheet.set(f"F12", f"Initial GM: {solas_data.get('GM0', 0):.3f} m")
-            
-            # Areas
-            sheet.set(f"F14", "AREA UNDER GZ CURVE:")
-            sheet.set(f"F15", f"0-30°: {solas_data.get('area_0_30', 0):.4f} m·rad")
-            sheet.set(f"F16", f"0-40°: {solas_data.get('area_0_40', 0):.4f} m·rad")
-            sheet.set(f"F17", f"30-40°: {solas_data.get('area_30_40', 0):.4f} m·rad")
-            
-            # SOLAS Criteria
-            sheet.set(f"F19", "SOLAS/IMO CRITERIA:")
+            sheet.set("H1",  "SOLAS/IMO STABILITY ANALYSIS")
+            sheet.set("H3",  "Ship: {}".format(solas_data.get('ship_label', 'N/A')))
+            sheet.set("H4",  "Load Condition: {}".format(solas_data.get('lc_label', 'N/A')))
+            sheet.set("H5",  "Total Mass: {:.1f} kg".format(
+                solas_data.get('total_mass_kg', 0)))
+
+            sheet.set("H7",  "STABILITY PARAMETERS:")
+            sheet.set("H8",  "Max GZ: {:.3f} m".format(solas_data.get('max_gz', 0)))
+            sheet.set("H9",  "Angle of Max GZ: {:.1f} deg".format(
+                solas_data.get('max_gz_angle', 0)))
+            sheet.set("H10", "Vanishing Angle: {:.1f} deg".format(
+                solas_data.get('vanishing_angle', 0)))
+            sheet.set("H11", "GZ at 30 deg: {:.3f} m".format(
+                solas_data.get('gz_at_30', 0)))
+            sheet.set("H12", "Initial GM: {:.3f} m  [{}]".format(
+                solas_data.get('GM0', 0),
+                solas_data.get('gm_source', 'curve fit')))
+
+            sheet.set("H14", "AREA UNDER GZ CURVE:")
+            sheet.set("H15", "0-30 deg:  {:.4f} m*rad".format(
+                solas_data.get('area_0_30', 0)))
+            sheet.set("H16", "0-40 deg:  {:.4f} m*rad".format(
+                solas_data.get('area_0_40', 0)))
+            sheet.set("H17", "30-40 deg: {:.4f} m*rad".format(
+                solas_data.get('area_30_40', 0)))
+
+            sheet.set("H19", "SOLAS/IMO CRITERIA:")
+            label_map = {
+                'area_0_30':    'Area  0-30 deg',
+                'area_0_40':    'Area  0-40 deg',
+                'area_30_40':   'Area 30-40 deg',
+                'gz_at_30':     'GZ at 30 deg  ',
+                'max_gz_angle': 'Angle max GZ  ',
+                'GM0':          'Initial GM    ',
+            }
             row = 20
-            
-            criteria = solas_data.get('solas_criteria', {})
-            for name, crit in criteria.items():
-                status = "PASS" if crit.get('passed', False) else "FAIL"
-                value = crit.get('value', 0)
-                required = crit.get('required', 0)
-                
-                # Format name
-                if name == 'area_0_30':
-                    display_name = "Area 0-30°"
-                elif name == 'area_0_40':
-                    display_name = "Area 0-40°"
-                elif name == 'area_30_40':
-                    display_name = "Area 30-40°"
-                elif name == 'gz_at_30':
-                    display_name = "GZ at 30°"
-                elif name == 'max_gz_angle':
-                    display_name = "Max GZ Angle"
-                elif name == 'GM0':
-                    display_name = "Initial GM"
-                else:
-                    display_name = name.replace('_', ' ').title()
-                
-                sheet.set(f"F{row}", 
-                         f"{display_name}: {value:.4f} / {required:.3f} ({status})")
+            for name, crit in solas_data.get('solas_criteria', {}).items():
+                status  = "PASS" if crit.get('passed') else "FAIL"
+                display = label_map.get(name, name.replace('_', ' ').title())
+                sheet.set("H{}".format(row),
+                          "{}: {:.4f} / {:.3f} ({})".format(
+                              display,
+                              crit.get('value', 0),
+                              crit.get('required', 0),
+                              status))
                 row += 1
-            
-            # Summary
-            passed = solas_data.get('passed_count', 0)
-            total = solas_data.get('total_criteria', 0)
+
+            passed    = solas_data.get('passed_count', 0)
+            total     = solas_data.get('total_criteria', 0)
             compliant = solas_data.get('compliant', False)
-            
-            sheet.set(f"F{row+1}", f"Summary: {passed}/{total} criteria passed")
-            sheet.set(f"F{row+2}", 
-                     "COMPLIANT" if compliant else "NON-COMPLIANT")
-            
-            # Recompute spreadsheet
+            sheet.set("H{}".format(row + 1),
+                      "Summary: {}/{} criteria passed".format(passed, total))
+            sheet.set("H{}".format(row + 2),
+                      "COMPLIANT" if compliant else "NON-COMPLIANT")
+
             if hasattr(sheet, 'Document') and sheet.Document:
                 sheet.Document.recompute()
-                
-            App.Console.PrintMessage(f"✓ SOLAS results exported to spreadsheet column F\n")
-            
+
+            App.Console.PrintMessage(
+                "SOLAS results written to spreadsheet column H\n")
+
         except Exception as e:
-            App.Console.PrintWarning(f"Could not export SOLAS results to spreadsheet: {e}\n")
+            App.Console.PrintWarning(
+                "Could not export SOLAS results to spreadsheet: {}\n".format(e))
             import traceback
             traceback.print_exc()
 
-
-
+    # ------------------------------------------------------------------ #
+    # Standard TaskPanel interface                                        #
+    # ------------------------------------------------------------------ #
     def reject(self):
         if not self.ship:
             return False
@@ -287,11 +335,11 @@ class TaskPanel:
         pass
 
     def setupUi(self):
-        self.form.angle = self.widget(QtGui.QLineEdit, "angle")
-        self.form.n_points = self.widget(QtGui.QSpinBox, "n_points")
-        self.form.var_trim = self.widget(QtGui.QCheckBox, "var_trim")
-        self.form.pbar = self.widget(QtGui.QProgressBar, "pbar")
-        self.form.group_pbar = self.widget(QtGui.QGroupBox, "group_pbar")
+        self.form.angle    = self.widget(QtGui.QLineEdit,    "angle")
+        self.form.n_points = self.widget(QtGui.QSpinBox,     "n_points")
+        self.form.var_trim = self.widget(QtGui.QCheckBox,    "var_trim")
+        self.form.pbar     = self.widget(QtGui.QProgressBar, "pbar")
+        self.form.group_pbar = self.widget(QtGui.QGroupBox,  "group_pbar")
         if self.initValues():
             return True
 
@@ -303,162 +351,109 @@ class TaskPanel:
         raise RuntimeError("No main window found")
 
     def widget(self, class_id, name):
-        """Return the selected widget.
-
-        Keyword arguments:
-        class_id -- Class identifier
-        name -- Name of the widget
-        """
-        mw = self.getMainWindow()
+        mw   = self.getMainWindow()
         form = mw.findChild(QtGui.QWidget, "GZTaskPanel")
         return form.findChild(class_id, name)
 
     def initValues(self):
-        """ Set initial values for fields """
-        # OLD BROKEN METHOD:
-        # sel_lcs = Selection.get_lcs()
-        # if not sel_lcs:
-        #     msg = App.Qt.translate(
-        #         "ship_console",
-        #         "A load condition instance must be selected before using this tool")
-        #     App.Console.PrintError(msg + '\n')
-        #     return True
-        
-        # NEW SIMPLE METHOD: Find ANY spreadsheet called "LoadCondition"
+        """Locate ship and LoadCondition spreadsheet; populate UI defaults."""
         self.lc = None
-        
-        # Method 1: Try to find by name
+
         for obj in App.ActiveDocument.Objects:
-            if (hasattr(obj, 'TypeId') and 'Spreadsheet' in obj.TypeId and
-                ('LoadCondition' in obj.Name or 'LoadCondition' in obj.Label)):
+            if (hasattr(obj, 'TypeId') and
+                    'Spreadsheet' in obj.TypeId and
+                    ('LoadCondition' in obj.Name or
+                     'LoadCondition' in obj.Label)):
                 self.lc = obj
                 break
-        
-        # Method 2: If not found, take first spreadsheet
+
         if not self.lc:
             for obj in App.ActiveDocument.Objects:
                 if hasattr(obj, 'TypeId') and 'Spreadsheet' in obj.TypeId:
                     self.lc = obj
                     break
-        
+
         if not self.lc:
             msg = App.Qt.translate(
                 "ship_console",
-                "A load condition spreadsheet must be present in the document")
+                "A LoadCondition spreadsheet must be present in the document")
             App.Console.PrintError(msg + '\n')
             return True
-        
-        App.Console.PrintMessage("Using LoadCondition: {}\n".format(self.lc.Label))
-        
-        # Get ship from spreadsheet
+
+        App.Console.PrintMessage(
+            "Using LoadCondition: {}\n".format(self.lc.Label))
+
         ship_label = None
-        try:
-            ship_label = self.lc.get('B2')  # Try new format first
-        except:
+        for cell in ('B2', 'B1'):
             try:
-                ship_label = self.lc.get('B1')  # Fallback to old format
-            except:
-                pass
-        
+                ship_label = self.lc.get(cell)
+                break
+            except Exception:
+                continue
+
         if ship_label:
             ships = App.ActiveDocument.getObjectsByLabel(ship_label)
-            if len(ships) == 1:
-                self.ship = ships[0]
-            else:
-                # Fallback method
+            self.ship = ships[0] if len(ships) == 1 else None
+
+        if not self.ship:
+            try:
                 from ..shipUtils import Selection as ShipSelection
                 self.ship = ShipSelection.get_lc_ship(self.lc)
-        else:
-            from ..shipUtils import Selection as ShipSelection
-            self.ship = ShipSelection.get_lc_ship(self.lc)
-        
+            except Exception:
+                pass
+
         if not self.ship:
             msg = App.Qt.translate(
                 "ship_console",
-                "Cannot find associated ship for this LoadCondition")
+                "Cannot find the ship associated with this LoadCondition")
             App.Console.PrintError(msg + '\n')
             return True
-        
-        # For compatibility - create empty lists
+
         self.weights = []
-        self.tanks = []
-        
-        # Set UI defaults
+        self.tanks   = []
+
         self.form.angle.setText("90 deg")
-        
-        # Try to use saved values
+        # Variable trim defaults to OFF.
+        # The iterative trim solver tends to diverge at large heel angles
+        # where trim is physically irrelevant. The user can still enable it
+        # via the checkbox for upright / small-angle calculations.
+        self.form.var_trim.setChecked(False)
         if hasattr(self.ship, 'PropertiesList'):
             props = self.ship.PropertiesList
-            try:
-                props.index("GZAngle")
-                self.form.angle.setText(self.ship.GZAngle.UserString)
-            except:
-                pass
-            try:
-                props.index("GZNumPoints")
-                self.form.n_points.setValue(self.ship.GZNumPoints)
-            except ValueError:
-                pass
-            try:
-                props.index("GZVariableTrim")
-                self.form.var_trim.setChecked(self.ship.GZVariableTrim)
-            except ValueError:
-                pass
-        
+            for prop, setter in (
+                    ("GZAngle",     lambda: self.form.angle.setText(
+                                        self.ship.GZAngle.UserString)),
+                    ("GZNumPoints", lambda: self.form.n_points.setValue(
+                                        self.ship.GZNumPoints)),
+                    # GZVariableTrim deliberately excluded – var_trim is
+                    # always OFF by default (set above). The saved True value
+                    # must not override the safe default.
+            ):
+                if prop in props:
+                    try:
+                        setter()
+                    except Exception:
+                        pass
+
         self.form.group_pbar.hide()
         return False
 
-    
-
     def save(self):
-        """ Saves the data into ship instance. """
-        angle = Units.parseQuantity(self.form.angle.text())
+        """Persist UI state into ship properties."""
+        angle    = Units.parseQuantity(self.form.angle.text())
         n_points = self.form.n_points.value()
         var_trim = self.form.var_trim.isChecked()
 
-        props = self.ship.PropertiesList
-        try:
-            props.index("GZAngle")
-        except ValueError:
-            try:
-                tooltip = App.Qt.translate(
-                    "ship_gz",
-                    "GZ curve tool angle selected [deg]")
-            except:
-                tooltip = "GZ curve tool angle selected [deg]"
-            self.ship.addProperty("App::PropertyAngle",
-                                  "GZAngle",
-                                  "Ship",
-                                  tooltip)
-        self.ship.GZAngle = angle
-        try:
-            props.index("GZNumPoints")
-        except ValueError:
-            try:
-                tooltip = App.Qt.translate(
-                    "ship_gz",
-                    "GZ curve tool number of points selected")
-            except:
-                tooltip = "GZ curve tool number of points selected"
-            self.ship.addProperty("App::PropertyInteger",
-                                  "GZNumPoints",
-                                  "Ship",
-                                  tooltip)
-        self.ship.GZNumPoints = n_points
-        try:
-            props.index("GZVariableTrim")
-        except ValueError:
-            try:
-                tooltip = App.Qt.translate(
-                    "ship_gz",
-                    "GZ curve tool variable trim angle selection")
-            except:
-                tooltip = "GZ curve tool variable trim angle selection"
-            self.ship.addProperty("App::PropertyBool",
-                                  "GZVariableTrim",
-                                  "Ship",
-                                  tooltip)
-        self.ship.GZVariableTrim = var_trim
+        props    = self.ship.PropertiesList
+        prop_defs = [
+            ("GZAngle",        "App::PropertyAngle",   "GZ curve angle [deg]",        angle),
+            ("GZNumPoints",    "App::PropertyInteger",  "GZ curve number of points",   n_points),
+            ("GZVariableTrim", "App::PropertyBool",     "GZ curve variable trim flag", var_trim),
+        ]
+        for name, type_, tooltip, value in prop_defs:
+            if name not in props:
+                self.ship.addProperty(type_, name, "Ship", tooltip)
+            setattr(self.ship, name, value)
 
 
 def createTask():

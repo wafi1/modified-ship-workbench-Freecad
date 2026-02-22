@@ -287,6 +287,90 @@ def createLoadCondition(ship, delete_existing=True):  # DEFAULT TRUE!
     else:
         print("ℹ️ No weights found in ship.Weights")
 
+    # ── CRANES section ─────────────────────────────────────────────
+    cranes = [o for o in doc.Objects
+              if getattr(getattr(o, "Proxy", None), "Type", "") == "ShipCrane"]
+    
+    if cranes:
+        print(f"\n🏗️ Adding CRANES section ({len(cranes)} cranes)...")
+        
+        row += 1  # Leerzeile
+        lc.mergeCells(f'A{row}:K{row}')
+        lc.set(f'A{row}', "CRANES")
+        lc.setAlignment(f'A{row}', 'center', 'keep')
+        lc.setStyle(f'A{row}', 'bold', 'add')
+        lc.setBackground(f'A{row}', (0.95, 0.90, 0.80))
+        row += 1
+
+        # CRANE HEADER
+        for i, h in enumerate(["Name", "Component", "-", "Mass[kg]", "LCG[m]",
+                               "TCG[m]", "VCG[m]", "MomX", "MomY", "MomZ", "Note"]):
+            cell = chr(ord('A') + i) + str(row)
+            lc.set(cell, h)
+            lc.setStyle(cell, 'bold', 'add')
+            lc.setBackground(cell, HEADER_BG)
+        row += 1
+
+        crane_bg = (0.95, 0.90, 0.80)
+        crane_count = 0
+
+        for crane in cranes:
+            label = getattr(crane, 'Label', crane.Name)
+            pos   = crane.Placement.Base
+            lcg_m = pos.x / 1000.0
+            tcg_m = pos.y / 1000.0
+
+            # Schwerpunkt Boom-Z: BoomCGPosition falls vorhanden
+            if hasattr(crane, 'BoomCGPosition'):
+                vcg_boom_m = float(crane.BoomCGPosition.z) / 1000.0
+            else:
+                vcg_boom_m = (pos.z + float(getattr(crane, 'BoomPivotHeight', 0))) / 1000.0
+
+            # Kranfuss-VCG: Mitte Turm
+            base_h  = float(getattr(crane, 'BaseHeight',  0))
+            tower_h = float(getattr(crane, 'TowerHeight', 0))
+            vcg_base_m = (pos.z + (base_h + tower_h) / 2.0) / 1000.0
+
+            # ── Zeile 1: Kranbaum ──────────────────────────────────
+            boom_kg = float(getattr(crane, 'BoomWeight', 0.0)) * 1000.0
+            lc.set(f'A{row}', label)
+            lc.set(f'B{row}', "Kranbaum")
+            lc.set(f'C{row}', "-")
+            lc.set(f'D{row}', str(boom_kg))
+            lc.set(f'E{row}', f"{lcg_m:.3f}")
+            lc.set(f'F{row}', f"{tcg_m:.3f}")
+            lc.set(f'G{row}', f"{vcg_boom_m:.3f}")
+            lc.set(f'H{row}', "0.00")
+            lc.set(f'I{row}', "0.00")
+            lc.set(f'J{row}', "0.00")
+            lc.set(f'K{row}', "Boom")
+            for col in ['A','B','C','D','E','F','G']:
+                lc.setBackground(f'{col}{row}', crane_bg)
+            row += 1
+
+            # ── Zeile 2: Last am Haken (Platzhalter = 0) ──────────
+            lc.set(f'A{row}', label)
+            lc.set(f'B{row}', "Last am Haken")
+            lc.set(f'C{row}', "-")
+            lc.set(f'D{row}', "0")      # wird manuell eingetragen
+            lc.set(f'E{row}', f"{lcg_m:.3f}")
+            lc.set(f'F{row}', f"{tcg_m:.3f}")
+            lc.set(f'G{row}', f"{vcg_boom_m:.3f}")
+            lc.set(f'H{row}', "0.00")
+            lc.set(f'I{row}', "0.00")
+            lc.set(f'J{row}', "0.00")
+            lc.set(f'K{row}', "Hook load")
+            for col in ['A','B','C','D','E','F','G']:
+                lc.setBackground(f'{col}{row}', crane_bg)
+            row += 1
+
+            crane_count += 1
+            print(f"  ✓ {label}: Boom={boom_kg:.0f}kg, Hook=0kg (Platzhalter)")
+
+        print(f"  {crane_count} Kräne eingetragen")
+
+    
+
     # ── CARGO section ───────────────────────────────────────────────
     if cargo_objects:
         print(f"\n📦 Adding CARGO section ({len(cargo_objects)} objects)...")
@@ -373,6 +457,8 @@ def createLoadCondition(ship, delete_existing=True):  # DEFAULT TRUE!
     print(f"{'='*60}")
     print(f"🚀 Next: Run 'Calculate Load Case' for calculations")
     print(f"{'='*60}")
+    if cranes:
+        print(f"Cranes      : {len(cranes) * 2} rows ({len(cranes)} Kräne × 2)")
     
     return lc
 

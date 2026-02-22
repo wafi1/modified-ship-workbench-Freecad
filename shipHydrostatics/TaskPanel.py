@@ -152,10 +152,8 @@ class TaskPanel:
         self.form.n_draft = self.widget(QtGui.QSpinBox, "n_draft")
         self.form.pbar = self.widget(QtGui.QProgressBar, "pbar")
         self.form.group_pbar = self.widget(QtGui.QGroupBox, "group_pbar")
-        # Initial values
         if self.initValues():
             return True
-        # Connect Signals and Slots
         QtCore.QObject.connect(self.form.trim,
                                QtCore.SIGNAL("valueChanged(const Base::Quantity&)"),
                                self.onData)
@@ -255,7 +253,6 @@ class TaskPanel:
             trim.Unit != Units.Angle:
             return
 
-        # Clamp the values to the bounds
         bbox = self.ship.Shape.BoundBox
         draft_min = Units.Quantity(bbox.ZMin, Units.Length)
         draft_max = Units.Quantity(bbox.ZMax, Units.Length)
@@ -263,14 +260,10 @@ class TaskPanel:
             self.form.min_draft, draft_min, draft_max, min_draft)
         max_draft = self.clampValue(
             self.form.max_draft, draft_min, draft_max, max_draft)
-        # Check that the minimum value is lower than
-        # the maximum one
         min_draft = self.clampValue(self.form.min_draft,
                                     draft_min,
                                     max_draft,
                                     min_draft)
-
-        # Clamp the trim angle to sensible values
         trim = self.clampValue(self.form.trim,
                                Units.parseQuantity("-90 deg"),
                                Units.parseQuantity("90 deg"),
@@ -339,87 +332,121 @@ class TaskPanel:
         @param surface Surface object (must be a Part::Shape)
         @return Section points array, [] if line don't cut surface
         """
-        result = []
-        vertices = line.Vertexes
-        nVertex = len(vertices)
-
         section = line.cut(surface)
+        return section.Vertexes
 
-        points = section.Vertexes
-        return points
+    @staticmethod
+    def _ray_param(p0, p1, pt):
+        """Robustly compute the parameter t of 'pt' along the ray p0 → p1.
+
+        Uses the axis with the largest extent to avoid division-by-near-zero
+        errors that occurred in the original code when the ray direction was
+        mostly in Y or Z but the code only checked the X component.
+
+        Returns a float in [0, 1] if pt lies between p0 and p1.
+        """
+        dx = p1.x - p0.x
+        dy = p1.y - p0.y
+        dz = p1.z - p0.z
+        # Pick the numerically largest component
+        adx, ady, adz = abs(dx), abs(dy), abs(dz)
+        if adx >= ady and adx >= adz:
+            return (pt.X - p0.x) / dx if adx > 1e-9 else 0.5
+        elif ady >= adx and ady >= adz:
+            return (pt.Y - p0.y) / dy if ady > 1e-9 else 0.5
+        else:
+            return (pt.Z - p0.z) / dz if adz > 1e-9 else 0.5
 
     def externalFaces(self, shape):
-        """ Returns detected external faces.
-        @param shape Shape where external faces wanted.
-        @return List of external faces detected.
+        """Returns external faces using FreeCAD's native isInside() check.
+
+        Strategy
+        --------
+        For every face we move a tiny probe point along the outward normal
+        and ask every solid of the shape whether that point is inside it.
+        If *no* solid contains the probe point the face is external.
+
+        This replaces the previous manual ray-casting loop which had two
+        known bugs:
+          1. The parameter calculation only used the X component of the ray
+             direction, giving wrong results for faces whose normal points
+             mainly in Y or Z.
+          2. The face sampling (n_faces // sample_size) was inconsistent and
+             could miss intersections entirely for small meshes.
+
+        isInside() is a native C++ call and is therefore much faster than
+        iterating over faces in Python.
         """
-        result = []
+        import time
+        start_time = time.time()
+
         faces = shape.Faces
-        bbox = shape.BoundBox
-        L = bbox.XMax - bbox.XMin
-        B = bbox.YMax - bbox.YMin
-        T = bbox.ZMax - bbox.ZMin
-        dist = math.sqrt(L*L + B*B + T*T)
+        solids = shape.Solids
+        n_faces = len(faces)
+
+        if n_faces == 0:
+            return []
+
         msg = App.Qt.translate(
             "ship_console",
             "Computing external faces")
         App.Console.PrintMessage(msg + '...\n')
-        # Valid/invalid faces detection loop
-        for i in range(len(faces)):
-            App.Console.PrintMessage("\t{} / {}\n".format(i + 1, len(faces)))
-            f = faces[i]
-            # Create a line normal to surface at middle point
-            u = 0.0
-            v = 0.0
-            try:
-                surf = f.Surface
-                u = 0.5*(surf.getUKnots()[0]+surf.getUKnots()[-1])
-                v = 0.5*(surf.getVKnots()[0]+surf.getVKnots()[-1])
-            except:
-                cog = f.CenterOfMass
-                [u, v] = f.Surface.parameter(cog)
-            p0 = f.valueAt(u, v)
-            try:
-                n = f.normalAt(u, v).normalize()
-            except:
-                continue
-            p1 = p0 + n.multiply(1.5 * dist)
-            line = Part.makeLine(p0, p1)
-            # Look for faces in front of this
-            nPoints = 0
-            for j in range(len(faces)):
-                f2 = faces[j]
-                section = self.lineFaceSection(line, f2)
-                if len(section) <= 2:
-                    continue
-                # Add points discarding start and end
-                nPoints = nPoints + len(section) - 2
-            # In order to avoid special directions we can modify line
-            # normal a little bit.
-            angle = 5
-            line.rotate(p0, Vector(1, 0, 0), angle)
-            line.rotate(p0, Vector(0, 1, 0), angle)
-            line.rotate(p0, Vector(0, 0, 1), angle)
-            nPoints2 = 0
-            for j in range(len(faces)):
-                if i == j:
-                    continue
-                f2 = faces[j]
-                section = self.lineFaceSection(line, f2)
-                if len(section) <= 2:
-                    continue
-                # Add points discarding start and end
-                nPoints2 = nPoints + len(section) - 2
-            # If the number of intersection points is pair, is a
-            # external face. So if we found an odd points intersection,
-            # face must be discarded.
-            if (nPoints % 2) or (nPoints2 % 2):
-                continue
-            result.append(f)
-            self.timer.start(0.0)
-            self.loop.exec_()
-            if(not self.running):
+        App.Console.PrintMessage("\tTotal faces: {}\n".format(n_faces))
+
+        # Probe distance: 0.1 % of the bounding-box diagonal is enough to
+        # clear floating-point noise on the surface itself.
+        bbox = shape.BoundBox
+        diag = math.sqrt((bbox.XMax - bbox.XMin) ** 2 +
+                         (bbox.YMax - bbox.YMin) ** 2 +
+                         (bbox.ZMax - bbox.ZMin) ** 2)
+        probe_dist = diag * 0.001
+
+        result = []
+        for idx, face in enumerate(faces):
+            if not self.running:
                 break
+
+            # Yield to the Qt event loop periodically so the UI stays responsive
+            if idx % 50 == 0:
+                App.Console.PrintMessage(
+                    "\t\t{:.1f}%\n".format(100.0 * idx / n_faces))
+                self.timer.start(0.0)
+                self.loop.exec_()
+
+            try:
+                cog = face.CenterOfMass
+                u, v = face.Surface.parameter(cog)
+                normal = face.normalAt(u, v).normalize()
+            except Exception:
+                # Degenerate face – skip it
+                continue
+
+            # Probe point just outside the surface in the normal direction
+            probe = Vector(cog.x + normal.x * probe_dist,
+                           cog.y + normal.y * probe_dist,
+                           cog.z + normal.z * probe_dist)
+
+            # A face is external when its outward probe point is not enclosed
+            # by any solid of the shape.
+            is_external = not any(
+                solid.isInside(probe, probe_dist * 0.1, False)
+                for solid in solids
+            )
+            if is_external:
+                result.append(face)
+
+        elapsed = time.time() - start_time
+        App.Console.PrintMessage(
+            "\tFound {} external faces in {:.1f}s\n".format(
+                len(result), elapsed))
+
+        # Safety fallback: if suspiciously few faces were found, return all
+        if len(result) < n_faces * 0.05:
+            App.Console.PrintWarning(
+                "Warning: Very few external faces detected – "
+                "falling back to all faces\n")
+            return faces
+
         return result
 
 

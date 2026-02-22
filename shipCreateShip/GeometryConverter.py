@@ -1,54 +1,268 @@
 #***************************************************************************
-#*   GeometryConverter.py - KORRIGIERT: Keine Box mehr!                      *
+#*   GeometryConverter.py - WASSERDICHTE Solid-Erzeugung                    *
 #***************************************************************************/
 
 import FreeCAD as App
 import Part
 import Mesh
+import MeshPart
 
 class GeometryConverter:
-    """Konvertiert Mesh zu Solid - korrekt ohne Box-Fallback"""
+    """Konvertiert Mesh zu wasserdichtem Solid"""
     
     def __init__(self):
         self.debug = True
         self.tolerance = 0.1
         
     def convert_mesh_to_solid(self, mesh_object):
-        """Konvertiert Mesh zu Solid"""
+        """Konvertiert Mesh zu wasserdichtem Solid"""
         
         if self.debug:
-            App.Console.PrintMessage("=== GeometryConverter: Mesh→Solid ===\n")
+            App.Console.PrintMessage("=== GeometryConverter: Mesh→Solid (wasserdicht) ===\n")
         
-        # VERSUCH 1: Direkte Konvertierung
+        mesh = self._get_mesh_copy(mesh_object)
+        
+        # WICHTIG: Mesh muss geschlossen sein für gültiges Solid!
+        if not self._is_mesh_closed(mesh):
+            App.Console.PrintWarning("⚠ Mesh ist nicht geschlossen! Versuche zu schließen...\n")
+            mesh = self._close_mesh(mesh)
+        
+        # VERSUCH 1: MeshPart.meshToShape (robuster als makeShapeFromMesh)
         if self.debug:
-            App.Console.PrintMessage("→ Versuch 1: Direkte Konvertierung...\n")
-        solid = self._try_direct_conversion(mesh_object)
+            App.Console.PrintMessage("→ Versuch 1: MeshPart.meshToShape...\n")
+        solid = self._try_meshpart_conversion(mesh)
         if solid:
-            if self.debug:
-                App.Console.PrintMessage("✓ Versuch 1 erfolgreich\n")
             return solid
         
-        # VERSUCH 2: Mit Reparatur
+        # VERSUCH 2: Mit höherer Toleranz
         if self.debug:
-            App.Console.PrintMessage("→ Versuch 2: Mit Reparatur...\n")
-        solid = self._try_repair_conversion(mesh_object)
+            App.Console.PrintMessage("→ Versuch 2: Höhere Toleranz...\n")
+        solid = self._try_high_tolerance(mesh)
         if solid:
-            if self.debug:
-                App.Console.PrintMessage("✓ Versuch 2 erfolgreich\n")
             return solid
         
-        # VERSUCH 3: Aus Faces bauen
+        # VERSUCH 3: Manueller Shell-Aufbau mit Füllung
         if self.debug:
-            App.Console.PrintMessage("→ Versuch 3: Aus Faces...\n")
-        solid = self._try_from_faces(mesh_object)
+            App.Console.PrintMessage("→ Versuch 3: Manueller Aufbau...\n")
+        solid = self._try_manual_shell(mesh)
         if solid:
-            if self.debug:
-                App.Console.PrintMessage("✓ Versuch 3 erfolgreich\n")
             return solid
         
-        App.Console.PrintWarning("=== ALLE VERSUCHE FEHLGESCHLAGEN ===\n")
-        App.Console.PrintWarning("Bitte Mesh manuell reparieren (Mesh→Analyze→Evaluate & Repair)\n")
+        App.Console.PrintError("=== KONVERTIERUNG FEHLGESCHLAGEN ===\n")
         return None
+    
+    def _is_mesh_closed(self, mesh):
+        """Prüft ob Mesh geschlossen ist"""
+        try:
+            # Ein geschlossenes Mesh hat keine freien Kanten
+            # MeshPart kann das prüfen
+            return mesh.isSolid()
+        except:
+            # Fallback: Prüfe auf Boundary-Faces
+            try:
+                shape = Part.Shape()
+                shape.makeShapeFromMesh(mesh.Topology, 0.1)
+                # Wenn es ein Solid wird, war es geschlossen
+                return len(shape.Solids) > 0
+            except:
+                return False
+    
+    def _close_mesh(self, mesh):
+        """Versucht Mesh zu schließen"""
+        try:
+            # Füge fehlende Facets hinzu wo möglich
+            mesh.fillupHoles()
+            # Entferne doppelte Punkte die zu Lücken führen
+            mesh.removeDuplicatedPoints()
+            # Harmonisiere Normalen (wichtig für Richtung!)
+            mesh.harmonizeNormals()
+            return mesh
+        except Exception as e:
+            App.Console.PrintWarning(f"  Konnte Mesh nicht schließen: {e}\n")
+            return mesh
+    
+    def _try_meshpart_conversion(self, mesh):
+        """Verwendet MeshPart (robusteste Methode)"""
+        try:
+            # MeshPart.meshToShape erzeugt direkt eine Shell
+            shape = MeshPart.meshToShape(mesh)
+            
+            if not shape or not shape.Faces:
+                return None
+            
+            if self.debug:
+                App.Console.PrintMessage(f"  → {len(shape.Faces)} Faces erzeugt\n")
+            
+            # Versuche geschlossene Shell zu machen
+            shell = Part.Shell(shape.Faces)
+            
+            if not shell.isValid():
+                # Versuche Shell zu reparieren
+                shell = shell.sewShape()
+            
+            if shell.isValid():
+                try:
+                    solid = Part.Solid(shell)
+                    if solid.isValid():
+                        if self.debug:
+                            App.Console.PrintMessage("  ✓ Wasserdichtes Solid erzeugt\n")
+                        return self._create_feature(solid, "Ship_Hull_MeshPart")
+                except:
+                    pass
+            
+            # Wenn nicht geschlossen, versuche zu füllen
+            return self._try_close_shell(shell)
+            
+        except Exception as e:
+            if self.debug:
+                App.Console.PrintMessage(f"  ✗ MeshPart: {e}\n")
+            return None
+    
+    def _try_high_tolerance(self, mesh):
+        """Versucht mit höherer Toleranz für problematische Meshes"""
+        for tol in [0.5, 1.0, 2.0]:
+            try:
+                shape = Part.Shape()
+                shape.makeShapeFromMesh(mesh.Topology, tol)
+                
+                if shape.Solids and shape.Solids[0].isValid():
+                    if self.debug:
+                        App.Console.PrintMessage(f"  ✓ Mit Toleranz {tol}m erfolgreich\n")
+                    return self._create_feature(shape.Solids[0], f"Ship_Hull_Tol{tol}")
+                
+                # Versuche aus Shell Solid zu machen
+                if shape.Shells:
+                    solid = Part.Solid(shape.Shells[0])
+                    if solid.isValid():
+                        return self._create_feature(solid, f"Ship_Hull_Tol{tol}")
+                        
+            except Exception as e:
+                continue
+        
+        return None
+    
+    def _try_manual_shell(self, mesh):
+        """Manueller Aufbau mit individueller Face-Prüfung"""
+        try:
+            # Erzeuge Shape mit niedriger Toleranz
+            shape = Part.Shape()
+            shape.makeShapeFromMesh(mesh.Topology, 0.01)
+            
+            if not shape.Faces:
+                return None
+            
+            # Prüfe jedes Face auf Validität
+            valid_faces = []
+            for i, face in enumerate(shape.Faces):
+                try:
+                    if face.isValid() and face.Area > 1e-6:
+                        valid_faces.append(face)
+                except:
+                    pass
+            
+            if self.debug:
+                App.Console.PrintMessage(f"  → {len(valid_faces)}/{len(shape.Faces)} Faces valide\n")
+            
+            if len(valid_faces) < 4:
+                return None
+            
+            # Baue Shell aus validen Faces
+            shell = Part.Shell(valid_faces)
+            
+            if not shell.isValid():
+                # Versuche zu nähen
+                try:
+                    shell.sewShape()
+                except:
+                    pass
+            
+            if shell.isValid():
+                try:
+                    solid = Part.Solid(shell)
+                    if solid.isValid():
+                        return self._create_feature(solid, "Ship_Hull_Manual")
+                except:
+                    pass
+            
+            return self._try_close_shell(shell)
+            
+        except Exception as e:
+            if self.debug:
+                App.Console.PrintMessage(f"  ✗ Manuell: {e}\n")
+            return None
+    
+    def _try_close_shell(self, shell):
+        """Versucht eine offene Shell zu schließen"""
+        try:
+            # Finde freie Kanten
+            free_edges = []
+            for edge in shell.Edges:
+                # Zähle wie oft die Kante in Faces vorkommt
+                count = sum(1 for f in shell.Faces if edge in f.Edges)
+                if count == 1:
+                    free_edges.append(edge)
+            
+            if not free_edges:
+                # Schon geschlossen?
+                try:
+                    solid = Part.Solid(shell)
+                    if solid.isValid():
+                        return self._create_feature(solid, "Ship_Hull_Closed")
+                except:
+                    pass
+                return None
+            
+            if self.debug:
+                App.Console.PrintMessage(f"  → {len(free_edges)} freie Kanten gefunden\n")
+            
+            # Versuche Löcher zu füllen (vereinfacht)
+            # Für Schiffe: Meistens Deck oder Boden offen
+            # Wir akzeptieren das Shell-Solid für die Hydrostatik
+            # wenn es "fast" geschlossen ist
+            
+            if len(free_edges) < len(shell.Edges) * 0.1:  # < 10% offen
+                App.Console.PrintWarning("  ⚠ Shell ist fast geschlossen, verwende trotzdem\n")
+                # Erstelle ein "fettes" Solid durch Offset
+                try:
+                    # Versuche mit kleinem Offset zu schließen
+                    offset = shell.makeOffsetShape(0.1, 0.01, fill=True)
+                    if offset.Solids:
+                        return self._create_feature(offset.Solids[0], "Ship_Hull_Patched")
+                except:
+                    pass
+            
+            return None
+            
+        except Exception as e:
+            if self.debug:
+                App.Console.PrintMessage(f"  ✗ Close shell: {e}\n")
+            return None
+    
+    def _create_feature(self, shape, name):
+        """Erstellt Part::Feature aus Shape"""
+        try:
+            doc = App.ActiveDocument
+            obj = doc.addObject("Part::Feature", name)
+            obj.Shape = shape
+            
+            # WICHTIG: Prüfe Bounding Box
+            if not obj.Shape.BoundBox.isValid():
+                App.Console.PrintError("  ✗ Bounding Box ungültig!\n")
+                doc.removeObject(obj.Name)
+                return None
+            
+            doc.recompute()
+            
+            if self.debug:
+                bbox = obj.Shape.BoundBox
+                App.Console.PrintMessage(f"  ✓ {name} erstellt\n")
+                App.Console.PrintMessage(f"    BBox: {bbox.XLength:.1f} x {bbox.YLength:.1f} x {bbox.ZLength:.1f}\n")
+            
+            return obj
+            
+        except Exception as e:
+            App.Console.PrintError(f"  ✗ Feature erstellen: {e}\n")
+            return None
     
     def _get_mesh_copy(self, mesh_object):
         """Holt Mesh als Kopie"""
@@ -56,195 +270,32 @@ class GeometryConverter:
             return mesh_object.Mesh.copy()
         else:
             return mesh_object.copy()
-    
-    def _try_direct_conversion(self, mesh_object):
-        """Direkte Konvertierung ohne Reparatur"""
-        try:
-            mesh = self._get_mesh_copy(mesh_object)
-            
-            shape = Part.Shape()
-            shape.makeShapeFromMesh(mesh.Topology, self.tolerance)
-            
-            if not shape.isValid():
-                return None
-            
-            # Direktes Solid?
-            if shape.Solids:
-                doc = App.ActiveDocument
-                solid_obj = doc.addObject("Part::Feature", "Hull_Solid")
-                solid_obj.Shape = shape.Solids[0]
-                solid_obj.Label = "Ship_Hull_Direct"
-                return solid_obj
-            
-            # Aus Shell
-            if shape.Shells:
-                shell = shape.Shells[0]
-                solid_shape = Part.Solid(shell)
-                if solid_shape.isValid():
-                    doc = App.ActiveDocument
-                    solid_obj = doc.addObject("Part::Feature", "Hull_Solid")
-                    solid_obj.Shape = solid_shape
-                    solid_obj.Label = "Ship_Hull_Shell"
-                    return solid_obj
-            
-            return None
-            
-        except Exception as e:
-            if self.debug:
-                App.Console.PrintMessage(f"  ✗ Direkt: {e}\n")
-            return None
-    
-    def _try_repair_conversion(self, mesh_object):
-        """Konvertierung mit Mesh-Reparatur"""
-        try:
-            mesh = self._get_mesh_copy(mesh_object)
-            
-            if self.debug:
-                App.Console.PrintMessage(f"  Vor Reparatur: {mesh.CountPoints} Punkte\n")
-            
-            # Reparatur
-            mesh.fixDegenerations()
-            mesh.removeDuplicatedPoints()
-            mesh.removeDuplicatedFacets()
-            
-            if self.debug:
-                App.Console.PrintMessage(f"  Nach Reparatur: {mesh.CountPoints} Punkte\n")
-            
-            # Versuche mit verschiedenen Toleranzen
-            for tol in [0.1, 0.5, 1.0]:
-                if self.debug:
-                    App.Console.PrintMessage(f"  → Toleranz {tol}...\n")
-                
-                shape = Part.Shape()
-                shape.makeShapeFromMesh(mesh.Topology, tol)
-                
-                if shape.isValid():
-                    if self.debug:
-                        App.Console.PrintMessage(f"    ✓ Shape valide mit Toleranz {tol}\n")
-                    
-                    if shape.Solids:
-                        doc = App.ActiveDocument
-                        solid_obj = doc.addObject("Part::Feature", "Hull_Solid")
-                        solid_obj.Shape = shape.Solids[0]
-                        solid_obj.Label = f"Ship_Hull_tol{tol}"
-                        return solid_obj
-                    
-                    if shape.Shells:
-                        try:
-                            solid_shape = Part.Solid(shape.Shells[0])
-                            if solid_shape.isValid():
-                                doc = App.ActiveDocument
-                                solid_obj = doc.addObject("Part::Feature", "Hull_Solid")
-                                solid_obj.Shape = solid_shape
-                                solid_obj.Label = f"Ship_Hull_Shell{tol}"
-                                return solid_obj
-                        except:
-                            pass
-            
-            return None
-            
-        except Exception as e:
-            if self.debug:
-                App.Console.PrintMessage(f"  ✗ Reparatur: {e}\n")
-            return None
-    
-    def _try_from_faces(self, mesh_object):
-        """Versucht aus Faces ein Solid zu bauen"""
-        try:
-            mesh = self._get_mesh_copy(mesh_object)
-            
-            shape = Part.Shape()
-            shape.makeShapeFromMesh(mesh.Topology, 0.1)
-            
-            if not shape.isValid() or not shape.Faces:
-                return None
-            
-            if self.debug:
-                App.Console.PrintMessage(f"  → {len(shape.Faces)} Faces gefunden\n")
-            
-            # Versuche alle Faces zu einer Shell zu verbinden
-            try:
-                shell = Part.Shell(shape.Faces)
-                if shell.isValid():
-                    if self.debug:
-                        App.Console.PrintMessage("    ✓ Shell erstellt\n")
-                    
-                    solid_shape = Part.Solid(shell)
-                    if solid_shape.isValid():
-                        doc = App.ActiveDocument
-                        solid_obj = doc.addObject("Part::Feature", "Hull_Solid")
-                        solid_obj.Shape = solid_shape
-                        solid_obj.Label = "Ship_Hull_Faces"
-                        return solid_obj
-            except Exception as e:
-                if self.debug:
-                    App.Console.PrintMessage(f"    ✗ Shell failed: {e}\n")
-            
-            return None
-            
-        except Exception as e:
-            if self.debug:
-                App.Console.PrintMessage(f"  ✗ Faces: {e}\n")
-            return None
 
 
-# Hilfsfunktion
+# Hilfsfunktionen
 def mesh_to_solid(mesh_object):
     """Einfache Hilfsfunktion"""
     converter = GeometryConverter()
     return converter.convert_mesh_to_solid(mesh_object)
 
 
-def solidify_half_hull(mesh_object, center_plane='YZ'):
-    """Spiegelt Hälfte und erzeugt Solid"""
-    try:
-        App.Console.PrintMessage("=== Spiegelung Hälfte → Ganzes ===\n")
-        
-        mesh = mesh_object.Mesh.copy() if hasattr(mesh_object, 'Mesh') else mesh_object.copy()
-        
-        # Spiegeln
-        mirrored = mesh.copy()
-        if center_plane == 'YZ':
-            transform = App.Matrix()
-            transform.A11 = -1
-        else:
-            transform = App.Matrix()
-            transform.A22 = -1
-        
-        mirrored.transform(transform)
-        
-        # Kombinieren
-        combined = Mesh.Mesh()
-        combined.addMesh(mesh)
-        combined.addMesh(mirrored)
-        
-        App.Console.PrintMessage(f"→ Kombiniert: {combined.CountPoints} Punkte\n")
-        
-        # Konvertieren
-        shape = Part.Shape()
-        shape.makeShapeFromMesh(combined.Topology, 0.1)
-        
-        if not shape.isValid():
-            App.Console.PrintError("  ✗ Shape ungültig\n")
-            return None
-        
-        if shape.Solids:
-            solid_shape = shape.Solids[0]
-        elif shape.Shells:
-            solid_shape = Part.Solid(shape.Shells[0])
-        else:
-            App.Console.PrintError("  ✗ Kein Solid möglich\n")
-            return None
-        
-        if solid_shape.isValid():
-            doc = App.ActiveDocument
-            solid = doc.addObject("Part::Feature", "Ship_Hull_Full")
-            solid.Shape = solid_shape
-            solid.Label = "Ship_Hull_Complete"
-            return solid
-        
-        return None
-        
-    except Exception as e:
-        App.Console.PrintError(f"  ✗ Fehler: {e}\n")
-        return None
+def check_solid_validity(solid_obj):
+    """Prüft ob Solid für Hydrostatik geeignet ist"""
+    if not solid_obj or not hasattr(solid_obj, 'Shape'):
+        return False, "Kein Objekt"
+    
+    shape = solid_obj.Shape
+    
+    checks = {
+        "isValid": shape.isValid(),
+        "hasBBox": shape.BoundBox.isValid() if hasattr(shape, 'BoundBox') else False,
+        "isSolid": len(shape.Solids) > 0,
+        "volume": shape.Volume if hasattr(shape, 'Volume') else 0,
+    }
+    
+    errors = [k for k, v in checks.items() if not v]
+    
+    if errors:
+        return False, f"Fehler: {', '.join(errors)}"
+    
+    return True, f"OK: Vol={checks['volume']:.2f}m³"

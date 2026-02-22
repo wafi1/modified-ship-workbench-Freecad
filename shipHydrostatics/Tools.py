@@ -55,15 +55,9 @@ def placeShipShape(shape, draft, roll, trim):
     base_z -- The new base z coordinate (after applying the roll angle). Useful
     if you want to revert back the transformation
     """
-    # Roll the ship. In order to can deal with large roll angles, we are
-    # proceeding as follows:
-    # 1.- Applying the roll with respect the base line
-    # 2.- Recentering the ship in the y direction
-    # 3.- Readjusting the base line
     shape.rotate(Vector(0.0, 0.0, 0.0), Vector(1.0, 0.0, 0.0), roll)
     base_z = shape.BoundBox.ZMin
     shape.translate(Vector(0.0, draft * math.sin(math.radians(roll)), -base_z))
-    # Trim the ship. In this case we only need to correct the x direction
     shape.rotate(Vector(0.0, 0.0, 0.0), Vector(0.0, -1.0, 0.0), trim)
     shape.translate(Vector(draft * math.sin(math.radians(trim)), 0.0, 0.0))
     shape.translate(Vector(0.0, 0.0, -draft))
@@ -86,7 +80,6 @@ def getUnderwaterSide(shape, force=True):
     Returned value:
     Cropped shape. It is not modifying the input shape
     """
-    # Convert the shape into an active object
     Part.show(shape)
     orig = App.ActiveDocument.Objects[-1]
     try:
@@ -103,7 +96,6 @@ def getUnderwaterSide(shape, force=True):
     zmin = Units.Quantity(bbox.ZMin, Units.Length)
     zmax = Units.Quantity(bbox.ZMax, Units.Length)
 
-    # Create the "sea" box to intersect the ship
     L = xmax - xmin
     B = ymax - ymin
     H = zmax - zmin
@@ -131,8 +123,6 @@ def getUnderwaterSide(shape, force=True):
         pass
     App.ActiveDocument.recompute()
     if force and len(common.Shape.Solids) == 0:
-        # The common operation is failing, let's try moving a bit the free
-        # surface
         msg = App.Qt.translate(
             "ship_console",
             "Boolean operation failed when trying to get the underwater side."
@@ -184,20 +174,12 @@ def areas(ship, n, draft=None,
     shape, _ = placeShipShape(ship.Shape.copy(), draft, roll, trim)
     shape = getUnderwaterSide(shape)
 
-    # Sections distance computation
     bbox = shape.BoundBox
     xmin = Units.Quantity(bbox.XMin, Units.Length)
     xmax = Units.Quantity(bbox.XMax, Units.Length)
     dx = (xmax - xmin) / (n - 1.0)
 
-    # Since we are computing the sections in the total length (not in the
-    # length between perpendiculars), we can grant that the starting and
-    # ending sections have null area
     areas = [(xmin, Units.Quantity(0.0, Units.Area))]
-    # And since we just need to compute areas we will create boxes with its
-    # front face at the desired transversal area position, computing the
-    # common solid part, dividing it by faces, and getting only the desired
-    # ones.
     App.Console.PrintMessage("Computing transversal areas...\n")
     App.Console.PrintMessage("Some Inventor representation errors can be"
                              " shown, please ignore them.\n")
@@ -215,10 +197,8 @@ def areas(ship, n, draft=None,
             areas.append((Units.Quantity(x, Units.Length),
                           Units.Quantity(0.0, Units.Area)))
             continue
-        # It is a valid face, so we can add this area
         areas.append((Units.Quantity(x, Units.Length),
                       Units.Quantity(f.Area, Units.Area)))
-    # Last area is equal to zero (due to the total length usage)
     areas.append((Units.Quantity(xmax, Units.Length),
                   Units.Quantity(0.0, Units.Area)))
     App.Console.PrintMessage("Done!\n")
@@ -227,7 +207,9 @@ def areas(ship, n, draft=None,
 
 def displacement(ship, draft=None,
                        roll=Units.parseQuantity("0 deg"),
-                       trim=Units.parseQuantity("0 deg")):
+                       trim=Units.parseQuantity("0 deg"),
+                       precomputed_shape=None,
+                       precomputed_base_z=None):
     """Compute the ship displacement
 
     Position arguments:
@@ -237,6 +219,11 @@ def displacement(ship, draft=None,
     draft -- Ship draft (Design ship draft by default)
     roll -- Roll angle (0 degrees by default)
     trim -- Trim angle (0 degrees by default)
+    precomputed_shape -- Already placed and cropped underwater shape (optional).
+                         If provided, placeShipShape + getUnderwaterSide are
+                         skipped, saving a costly Boolean operation.
+    precomputed_base_z -- base_z value from placeShipShape (required when
+                          precomputed_shape is provided)
 
     Returned values:
     disp -- The ship displacement (a density of the water of 1025 kg/m^3 is
@@ -249,8 +236,13 @@ def displacement(ship, draft=None,
     if draft is None:
         draft = ship.Draft
 
-    shape, base_z = placeShipShape(ship.Shape.copy(), draft, roll, trim)
-    shape = getUnderwaterSide(shape)
+    if precomputed_shape is not None:
+        # --- OPTIMIZED PATH: reuse already computed shape ---
+        shape = precomputed_shape
+        base_z = precomputed_base_z if precomputed_base_z is not None else 0.0
+    else:
+        shape, base_z = placeShipShape(ship.Shape.copy(), draft, roll, trim)
+        shape = getUnderwaterSide(shape)
 
     vol = 0.0
     cog = Vector()
@@ -268,7 +260,6 @@ def displacement(ship, draft=None,
     bbox = shape.BoundBox
     Vol = (bbox.XMax - bbox.XMin) * (bbox.YMax - bbox.YMin) * abs(bbox.ZMin)
 
-    # Undo the transformations on the bouyance point
     B = Part.Point(Vector(cog.x, cog.y, cog.z))
     m = Matrix()
     m.move(Vector(0.0, 0.0, draft))
@@ -290,7 +281,6 @@ def displacement(ship, draft=None,
         App.Console.PrintError(msg + '\n')
         cb = 0.0
 
-    # Return the computed data
     return (DENS * Units.Quantity(vol, Units.Volume),
             Vector(B.X, B.Y, B.Z),
             cb)
@@ -319,7 +309,6 @@ def wettedArea(shape, draft, roll=Units.parseQuantity("0 deg"),
     for f in shape.Faces:
         if f.BoundBox.ZLength < 0.01 * submerged_length and \
            abs(f.BoundBox.ZMin) < 0.01 * submerged_length:
-            # Discard the eventual intersections with the free surface
             continue
         area = area + f.Area
     return Units.Quantity(area, Units.Area)
@@ -327,7 +316,8 @@ def wettedArea(shape, draft, roll=Units.parseQuantity("0 deg"),
 
 def floatingArea(ship, draft=None,
                        roll=Units.parseQuantity("0 deg"),
-                       trim=Units.parseQuantity("0 deg")):
+                       trim=Units.parseQuantity("0 deg"),
+                       precomputed_placed_shape=None):
     """Compute the ship floating area
 
     Position arguments:
@@ -337,6 +327,8 @@ def floatingArea(ship, draft=None,
     draft -- Ship draft (Design ship draft by default)
     roll -- Roll angle (0 degrees by default)
     trim -- Trim angle (0 degrees by default)
+    precomputed_placed_shape -- Already placed (but NOT cropped) ship shape.
+                                If provided, placeShipShape is skipped.
 
     Returned values:
     area -- Ship floating area
@@ -345,9 +337,10 @@ def floatingArea(ship, draft=None,
     if draft is None:
         draft = ship.Draft
 
-    # We want to intersect the whole ship with the free surface, so in this case
-    # we must not use the underwater side (or the tool will fail)
-    shape, _ = placeShipShape(ship.Shape.copy(), draft, roll, trim)
+    if precomputed_placed_shape is not None:
+        shape = precomputed_placed_shape
+    else:
+        shape, _ = placeShipShape(ship.Shape.copy(), draft, roll, trim)
 
     try:
         f = Part.Face(shape.slice(Vector(0,0,1), 0.0))
@@ -378,7 +371,8 @@ def floatingArea(ship, draft=None,
 
 def BML(ship, fs, draft=None,
                   roll=Units.parseQuantity("0 deg"),
-                  trim=Units.parseQuantity("0 deg")):
+                  trim=Units.parseQuantity("0 deg"),
+                  precomputed_disp=None):
     """Compute the moment required to trim the ship 1cm
 
     Position arguments:
@@ -389,12 +383,16 @@ def BML(ship, fs, draft=None,
     draft -- Ship draft (Design ship draft by default)
     roll -- Roll angle (0 degrees by default)
     trim -- Trim angle (0 degrees by default)
+    precomputed_disp -- Pre-computed (disp, B, cb) tuple to avoid redundant
+                        displacement calculation.
 
     Returned value:
-    BML radius and the displacement (would be useful for further computations,
-    like TMC)
+    BML radius and the displacement
     """
-    disp, B_orig, _ = displacement(ship, draft, roll, trim)
+    if precomputed_disp is not None:
+        disp = precomputed_disp[0]
+    else:
+        disp, _, _ = displacement(ship, draft, roll, trim)
     vol = disp / DENS
     inertia_unit = (Units.Quantity(1, Units.Length)**4).Unit
     return Units.Quantity(fs.MatrixOfInertia.A22, inertia_unit) / vol, disp
@@ -402,33 +400,37 @@ def BML(ship, fs, draft=None,
 
 def TMC(ship, fs, draft=None,
                   roll=Units.parseQuantity("0 deg"),
-                  trim=Units.parseQuantity("0 deg")):
+                  trim=Units.parseQuantity("0 deg"),
+                  precomputed_disp=None):
     """Compute the moment required to trim the ship 1cm
 
     Position arguments:
     ship -- Ship object (see createShip)
     fs -- The shape of the free surface. If None is passed, the BML will be
-          computed heuristically, i.e. the ship will be rotated a small angle,
-          tracking the bouyance center.
+          computed heuristically.
 
     Keyword arguments:
     draft -- Ship draft (Design ship draft by default)
     roll -- Roll angle (0 degrees by default)
     trim -- Trim angle (0 degrees by default)
+    precomputed_disp -- Pre-computed (disp, B, cb) tuple (optional).
 
     Returned value:
-    Moment required to trim the ship 1cm. Such moment is positive if it cause a
-    positive trim angle. The moment is expressed as a mass by a distance, not as
-    a force by a distance
+    Moment required to trim the ship 1cm.
     """
     if draft is None:
         draft = ship.Draft
 
     if fs is not None:
-        bml, disp = BML(ship, fs, draft=draft, roll=roll, trim=trim)
+        bml, disp = BML(ship, fs, draft=draft, roll=roll, trim=trim,
+                        precomputed_disp=precomputed_disp)
         return disp * bml / ship.Length.getValueAs('cm').Value
 
-    disp_orig, B_orig, _ = displacement(ship, draft, roll, trim)
+    if precomputed_disp is not None:
+        disp_orig, B_orig, _ = precomputed_disp
+    else:
+        disp_orig, B_orig, _ = displacement(ship, draft, roll, trim)
+
     factor = 10.0
     x = 0.5 * ship.Length.getValueAs('cm').Value
     y = 1.0
@@ -441,18 +443,20 @@ def TMC(ship, fs, draft=None,
     return (mom1 - mom0) / factor
 
 
-def BMT(ship, fs, draft=None, trim=Units.parseQuantity("0 deg")):
+def BMT(ship, fs, draft=None,
+                  trim=Units.parseQuantity("0 deg"),
+                  precomputed_disp=None):
     """Calculate "ship Bouyance center" - "transversal metacenter" radius
 
     Position arguments:
     ship -- Ship object (see createShip)
     fs -- The shape of the free surface. If None is passed, the BMT will be
-          computed heuristically, i.e. the ship will be rotated a small angle,
-          tracking the bouyance center.
+          computed heuristically.
 
     Keyword arguments:
     draft -- Ship draft (Design ship draft by default)
     trim -- Trim angle (0 degrees by default)
+    precomputed_disp -- Pre-computed (disp, B, cb) tuple (optional).
 
     Returned value:
     BMT radius
@@ -461,7 +465,12 @@ def BMT(ship, fs, draft=None, trim=Units.parseQuantity("0 deg")):
         draft = ship.Draft
 
     roll = Units.parseQuantity("0 deg")
-    disp, B0, _ = displacement(ship, draft, roll=roll, trim=trim)
+
+    if precomputed_disp is not None:
+        disp, B0, _ = precomputed_disp
+    else:
+        disp, B0, _ = displacement(ship, draft, roll=roll, trim=trim)
+
     if fs is not None:
         vol = disp / DENS
         inertia_unit = (Units.Quantity(1, Units.Length)**4).Unit
@@ -474,20 +483,14 @@ def BMT(ship, fs, draft=None, trim=Units.parseQuantity("0 deg")):
     for i in range(nRoll):
         roll = (maxRoll / nRoll) * (i + 1)
         _, B1, _ = displacement(ship, draft, roll, trim)
-        #     * M
-        #    / \
-        #   /   \  BM     ==|>   BM = (BB/2) / sin(alpha/2)
-        #  /     \
-        # *-------*
-        #     BB
         BB = B1 - B0
         BB.x = 0.0
-        # nRoll is actually representing the weight function
         BM += 0.5 * BB.Length / math.sin(math.radians(0.5 * roll)) / nRoll
     return Units.Quantity(BM, Units.Length)
 
 
-def mainFrameCoeff(ship, draft=None):
+def mainFrameCoeff(ship, draft=None,
+                         precomputed_underwater=None):
     """Compute the main frame coefficient
 
     Position arguments:
@@ -495,6 +498,8 @@ def mainFrameCoeff(ship, draft=None):
 
     Keyword arguments:
     draft -- Ship draft (Design ship draft by default)
+    precomputed_underwater -- Already placed + cropped underwater shape.
+                              If provided, the Boolean operation is skipped.
 
     Returned value:
     Ship main frame area coefficient
@@ -502,10 +507,13 @@ def mainFrameCoeff(ship, draft=None):
     if draft is None:
         draft = ship.Draft
 
-    shape, _ = placeShipShape(ship.Shape.copy(), draft,
-                              Units.parseQuantity("0 deg"),
-                              Units.parseQuantity("0 deg"))
-    shape = getUnderwaterSide(shape)
+    if precomputed_underwater is not None:
+        shape = precomputed_underwater
+    else:
+        shape, _ = placeShipShape(ship.Shape.copy(), draft,
+                                  Units.parseQuantity("0 deg"),
+                                  Units.parseQuantity("0 deg"))
+        shape = getUnderwaterSide(shape)
 
     try:
         f = Part.Face(shape.slice(Vector(1,0,0), 0.0))
@@ -555,21 +563,61 @@ class Point:
     def __init__(self, ship, faces, draft, trim):
         """Compute all the hydrostatics.
 
+        OPTIMIZED: The ship shape is placed and the Boolean underwater
+        intersection is performed only ONCE per Point. All sub-functions
+        receive the pre-computed shapes to avoid redundant operations.
+
         Position argument:
         ship -- Ship instance
         faces -- Ship external faces
         draft -- Ship draft
         trim -- Trim angle
         """
-        disp, B, cb = displacement(ship, draft=draft, trim=trim)
+        roll = Units.parseQuantity("0 deg")
+
+        # ------------------------------------------------------------------ #
+        # ONE-TIME: place shape and compute underwater intersection           #
+        # Previously this was done 4-5 times per Point (once in each of      #
+        # displacement / wettedArea / floatingArea / mainFrameCoeff / TMC).  #
+        # ------------------------------------------------------------------ #
+        placed_shape, base_z = placeShipShape(
+            ship.Shape.copy(), draft, roll, trim)
+        # Keep a separate copy for floatingArea (must NOT be cropped)
+        placed_shape_for_fs = placed_shape.copy()
+
+        underwater_shape = getUnderwaterSide(placed_shape)
+
+        # Displacement (uses cached underwater shape)
+        disp, B, cb = displacement(
+            ship, draft=draft, roll=roll, trim=trim,
+            precomputed_shape=underwater_shape,
+            precomputed_base_z=base_z)
+
+        precomputed_disp = (disp, B, cb)
+
+        # Wetted area (needs its own crop because wettedArea works on faces)
         if not faces:
-            wet = 0.0
+            wet = Units.Quantity(0.0, Units.Area)
         else:
             wet = wettedArea(faces, draft=draft, trim=trim)
-        farea, cf, fshape = floatingArea(ship, draft=draft, trim=trim)
-        mom = TMC(ship, fshape, draft=draft, trim=trim)
-        bm = BMT(ship, fshape, draft=draft, trim=trim)
-        cm = mainFrameCoeff(ship, draft=draft)
+
+        # Floating area (uses the placed-but-not-cropped copy)
+        farea, cf, fshape = floatingArea(
+            ship, draft=draft, trim=trim,
+            precomputed_placed_shape=placed_shape_for_fs)
+
+        # TMC: BML path uses fs + pre-computed displacement → no extra Boolean
+        mom = TMC(ship, fshape, draft=draft, trim=trim,
+                  precomputed_disp=precomputed_disp)
+
+        # BMT: uses fs + pre-computed displacement → no extra Boolean
+        bm = BMT(ship, fshape, draft=draft, trim=trim,
+                 precomputed_disp=precomputed_disp)
+
+        # Main frame coefficient (uses cached underwater shape)
+        cm = mainFrameCoeff(ship, draft=draft,
+                            precomputed_underwater=underwater_shape)
+
         # Store final data
         self.draft = draft
         self.trim = trim

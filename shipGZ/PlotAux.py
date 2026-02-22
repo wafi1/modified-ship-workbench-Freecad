@@ -1,634 +1,490 @@
-# ERWEITERTE PlotAux.py - Mit grafischer Flächendarstellung und SOLAS-Kriterien
-import os
-import math
+# PlotAux.py – Combined GZ stability report: text summary + chart in one figure
+#
+# Layout:
+#   ┌─────────────────────────────────────────┐
+#   │  Load Case Summary                      │  (top)
+#   ├─────────────────────────────────────────┤
+#   │  SOLAS Stability Criteria Table         │  (middle)
+#   ├─────────────────────────────────────────┤
+#   │  GZ Curve  +  Cumulative Area           │  (bottom, large)
+#   │  (left Y-axis / right Y-axis)           │
+#   └─────────────────────────────────────────┘
+#
+# Clicking the toolbar "Save" button defaults to PDF and saves all three sections.
+
 import numpy as np
-from PySide import QtGui, QtCore
 import FreeCAD
 import FreeCADGui
-import Spreadsheet
-from ..shipHydrostatics.PlotAux import autolim
 
 
-class Plot(object):
+# ---------------------------------------------------------
+# Trapezoidal integration – compatible with all NumPy versions
+# ---------------------------------------------------------
+if hasattr(np, 'trapezoid'):
+    _trapz = np.trapezoid
+elif hasattr(np, 'trapz'):
+    _trapz = np.trapz
+else:
+    def _trapz(y, x):
+        return np.sum((x[1:] - x[:-1]) * (y[1:] + y[:-1]) / 2.0)
+
+
+def _integrate(roll_rad, gz_m, a0_deg, a1_deg, vanishing_deg=None):
+    if vanishing_deg is not None:
+        a1_deg = min(a1_deg, vanishing_deg)
+    if a1_deg <= a0_deg:
+        return 0.0
+    angles    = np.linspace(np.radians(a0_deg), np.radians(a1_deg), 200)
+    interp_gz = np.interp(angles, roll_rad, gz_m)
+    return float(_trapz(interp_gz, angles))
+
+
+# ---------------------------------------------------------
+# Safe matplotlib import
+# ---------------------------------------------------------
+def _get_matplotlib():
+    try:
+        import matplotlib
+        import matplotlib.pyplot as plt
+        return matplotlib, plt
+    except ImportError:
+        return None, None
+
+
+# ---------------------------------------------------------
+# Main class
+# ---------------------------------------------------------
+class Plot:
     def __init__(self, roll, gz, draft, trim, lc_info=None):
-        """ Plot the GZ curve with SOLAS criteria
-
-        Position arguments:
-        roll -- List of roll angles (in degrees).
-        gz -- List of GZ values (in meters).
-        draft -- List of equilibrium drafts (in meters).
-        trim -- List of equilibrium trim angles (in degrees).
-        lc_info -- Optional dict with LoadCondition info
-        """
-        # WICHTIG: Initialisiere plt vor allem anderen!
-        self.plt = None
-        self.sheet = None
-        self.gz_plot_line = None
-        self.ax2 = None
-        self.roll_data = None
-        self.gz_data = None
-
+        self.lc_info  = lc_info or {}
         self.roll_deg = [r.getValueAs('deg').Value for r in roll]
-        self.gz_m = [l.getValueAs('m').Value for l in gz]
-        draft_vals = [t.getValueAs('m').Value for t in draft]
-        trim_vals = [t.getValueAs('deg').Value for t in trim]
-        self.lc_info = lc_info or {}
+        self.gz_m     = [g.getValueAs('m').Value   for g in gz]
+        self.draft_m  = [d.getValueAs('m').Value   for d in draft]
+        self.trim_deg = [t.getValueAs('deg').Value for t in trim]
+        self.disp_kg  = []
 
-        # Calculate SOLAS criteria
-        self.calculate_solas_criteria()
+        self.sheet = None
 
-        # Plot GZ curve mit grafischer Flächendarstellung
-        plot_failed = self.plot_with_area(self.roll_deg, self.gz_m)
+        # 1) SOLAS calculation
+        self._recalculate()
 
-        if plot_failed:
-            FreeCAD.Console.PrintWarning(
-                "Plot creation failed, but continuing with spreadsheet...\n")
+        # 2) Spreadsheet (must finish before plot)
+        self.spreadSheet()
 
-        # FIX 1: war self.spreadSheet(...) -> korrekt: self.fillSpreadSheet(...)
-        #         aber wir rufen spreadSheet() auf, das zuerst das Sheet anlegt
-        self.spreadSheet(self.roll_deg, self.gz_m, draft_vals, trim_vals)
+        # 3) Combined report figure
+        self._create_report_figure()
 
-        # Show SOLAS results in console
+        # 4) Console summary
         self.print_solas_results()
 
     # ------------------------------------------------------------------
-    # SOLAS calculations
+    # Set displacement
     # ------------------------------------------------------------------
+    def set_displacement(self, disp_list):
+        self.disp_kg = [float(d) for d in disp_list]
+        self.spreadSheet()
 
-    def calculate_solas_criteria(self):
-        """Calculate SOLAS/IMO stability criteria"""
-        roll_rad = np.radians(self.roll_deg)
-        gz_m = np.array(self.gz_m)
+    # ------------------------------------------------------------------
+    # SOLAS calculation
+    # ------------------------------------------------------------------
+    def _recalculate(self):
+        roll_rad = np.radians(np.array(self.roll_deg))
+        gz_m     = np.array(self.gz_m)
+        if len(gz_m) == 0:
+            self._init_empty_solas()
+            return
 
-        # 1. Find max GZ and its angle
-        max_gz_idx = np.argmax(gz_m)
-        self.max_gz = gz_m[max_gz_idx]
-        self.max_gz_angle = self.roll_deg[max_gz_idx]
+        max_idx = int(np.argmax(gz_m))
+        self.max_gz          = float(gz_m[max_idx])
+        self.max_gz_angle    = float(self.roll_deg[max_idx])
+        self.vanishing_angle = float(self.roll_deg[-1])
 
-        # 2. Find vanishing stability angle
-        vanishing_angle = 90  # Default
-        for i in range(max_gz_idx + 1, len(gz_m)):
-            if gz_m[i] <= 0:
-                if i > 0:
-                    x1 = roll_rad[i - 1]
-                    y1 = gz_m[i - 1]
-                    x2 = roll_rad[i]
-                    y2 = gz_m[i]
-                    if y1 > 0 and y2 <= 0:
-                        vanishing_rad = x1 + (x2 - x1) * (0 - y1) / (y2 - y1)
-                        vanishing_angle = np.degrees(vanishing_rad)
+        for i in range(max_idx + 1, len(gz_m)):
+            if gz_m[i] <= 0.0 and gz_m[i - 1] > 0.0:
+                x1, y1 = roll_rad[i - 1], gz_m[i - 1]
+                x2, y2 = roll_rad[i],     gz_m[i]
+                self.vanishing_angle = float(
+                    np.degrees(x1 + (x2 - x1) * (-y1) / (y2 - y1))
+                )
                 break
-        self.vanishing_angle = vanishing_angle
 
-        # 3. Calculate areas
-        self.calculate_areas(roll_rad, gz_m)
+        vd = self.vanishing_angle
+        self.area_0_30     = _integrate(roll_rad, gz_m, 0,  30, vd)
+        self.area_0_limit  = _integrate(roll_rad, gz_m, 0,  40, vd)
+        self.area_30_limit = _integrate(roll_rad, gz_m, 30, 40, vd)
+        self.gz_at_30      = float(np.interp(np.radians(30), roll_rad, gz_m))
 
-        # 4. Calculate cumulative areas for each point
-        self.calculate_cumulative_areas(roll_rad, gz_m)
-
-        # 5. Check criteria
-        self.check_criteria()
-
-    def manual_trapz(self, y, x):
-        """Manual trapezoidal integration as fallback for np.trapz"""
-        total = 0.0
-        for i in range(len(x) - 1):
-            dx = x[i + 1] - x[i]
-            avg_y = (y[i] + y[i + 1]) / 2.0
-            total += dx * avg_y
-        return total
-
-    def calculate_cumulative_areas(self, roll_rad, gz_m):
-        """Calculate cumulative area from 0° to each roll angle"""
-        use_numpy_trapz = hasattr(np, 'trapz')
-
-        self.cumulative_areas = []
-        self.incremental_areas = []
-
-        if use_numpy_trapz:
-            for i in range(len(roll_rad)):
-                if i == 0:
-                    self.cumulative_areas.append(0.0)
-                    self.incremental_areas.append(0.0)
-                else:
-                    area = np.trapz(gz_m[:i + 1], roll_rad[:i + 1])
-                    self.cumulative_areas.append(area)
-                    inc_area = np.trapz(gz_m[i - 1:i + 1], roll_rad[i - 1:i + 1])
-                    self.incremental_areas.append(inc_area)
+        # ── GM₀: prefer the value explicitly passed via lc_info ──────────
+        # lc_info['gm'] should be KM - KG (corrected for free surfaces)
+        # as calculated in the FreeCAD spreadsheet (e.g. cell G4).
+        # The curve-fit fallback (GZ/phi slope at small angles) is kept
+        # only when no spreadsheet value is available, and triggers a
+        # console warning so the discrepancy is immediately visible.
+        gm_from_lc = self.lc_info.get('gm', None)
+        if gm_from_lc is not None:
+            self.GM0        = float(gm_from_lc)
+            self.gm_source  = 'spreadsheet'
         else:
-            cumulative = 0.0
-            self.cumulative_areas.append(0.0)
-            self.incremental_areas.append(0.0)
+            # Fallback: linear regression GZ/phi in 0-10 deg range
+            self.GM0       = 0.0
+            small = (np.array(self.roll_deg) > 0) & (np.array(self.roll_deg) < 10)
+            if np.sum(small) >= 2:
+                A        = np.vstack([roll_rad[small], np.ones(np.sum(small))]).T
+                self.GM0 = float(
+                    np.linalg.lstsq(A, np.array(gz_m)[small], rcond=None)[0][0]
+                )
+            if self.GM0 == 0.0:
+                pos = np.where(np.array(self.roll_deg) > 0)[0]
+                if len(pos):
+                    phi      = roll_rad[pos[0]]
+                    self.GM0 = float(gz_m[pos[0]] / phi) if phi > 1e-6 else 0.0
+            self.gm_source = 'curve fit (fallback)'
+            FreeCAD.Console.PrintWarning(
+                f"GM0 not supplied via lc_info['gm'] – "
+                f"estimated from GZ curve slope: {self.GM0:.3f} m. "
+                f"Pass the spreadsheet GM to get the correct value.\n"
+            )
 
-            for i in range(1, len(roll_rad)):
-                dx = roll_rad[i] - roll_rad[i - 1]
-                avg_gz = (gz_m[i - 1] + gz_m[i]) / 2.0
-                inc_area = dx * avg_gz
-                cumulative += inc_area
-                self.cumulative_areas.append(cumulative)
-                self.incremental_areas.append(inc_area)
+        self.cumulative_areas = [0.0]
+        for i in range(1, len(roll_rad)):
+            self.cumulative_areas.append(
+                _integrate(roll_rad, gz_m, 0,
+                           float(np.degrees(roll_rad[i])), vd)
+            )
 
-    def calculate_areas(self, roll_rad, gz_m):
-        """Calculate areas under GZ curve"""
-        use_numpy_trapz = hasattr(np, 'trapz')
-
-        # Area 0-30°
-        idx_30 = np.searchsorted(roll_rad, np.radians(30))
-        if idx_30 > 0:
-            if use_numpy_trapz:
-                self.area_0_30 = np.trapz(gz_m[:idx_30], roll_rad[:idx_30])
-            else:
-                self.area_0_30 = self.manual_trapz(gz_m[:idx_30], roll_rad[:idx_30])
-        else:
-            self.area_0_30 = 0
-
-        # Area 0-40° or vanishing angle
-        angle_limit = min(np.radians(40), np.radians(self.vanishing_angle))
-        idx_limit = np.searchsorted(roll_rad, angle_limit)
-        if idx_limit > 0:
-            if use_numpy_trapz:
-                self.area_0_limit = np.trapz(gz_m[:idx_limit], roll_rad[:idx_limit])
-            else:
-                self.area_0_limit = self.manual_trapz(gz_m[:idx_limit], roll_rad[:idx_limit])
-        else:
-            self.area_0_limit = 0
-
-        # Area 30-40° or 30-vanishing
-        if angle_limit > np.radians(30):
-            idx_30 = np.searchsorted(roll_rad, np.radians(30))
-            if idx_30 < idx_limit:
-                if use_numpy_trapz:
-                    self.area_30_limit = np.trapz(
-                        gz_m[idx_30:idx_limit], roll_rad[idx_30:idx_limit])
-                else:
-                    self.area_30_limit = self.manual_trapz(
-                        gz_m[idx_30:idx_limit], roll_rad[idx_30:idx_limit])
-            else:
-                self.area_30_limit = 0
-        else:
-            self.area_30_limit = 0
-
-        # GZ at 30° (interpolated)
-        target_angle = np.radians(30)
-        idx = np.searchsorted(roll_rad, target_angle)
-        if idx == 0:
-            self.gz_at_30 = gz_m[0]
-        elif idx >= len(gz_m):
-            self.gz_at_30 = gz_m[-1]
-        else:
-            x1, y1 = roll_rad[idx - 1], gz_m[idx - 1]
-            x2, y2 = roll_rad[idx],     gz_m[idx]
-            self.gz_at_30 = y1 + (y2 - y1) * (target_angle - x1) / (x2 - x1)
-
-    def check_criteria(self):
-        """Check SOLAS criteria"""
         self.criteria = {
-            'Area 0-30° >= 0.055 m·rad': {
-                'value':    self.area_0_30,
-                'required': 0.055,
-                'passed':   self.area_0_30 >= 0.055
-            },
-            'Area 0-40°/vanishing >= 0.09 m·rad': {
-                'value':    self.area_0_limit,
-                'required': 0.09,
-                'passed':   self.area_0_limit >= 0.09
-            },
-            'Area 30-40°/vanishing >= 0.03 m·rad': {
-                'value':    self.area_30_limit,
-                'required': 0.03,
-                'passed':   self.area_30_limit >= 0.03
-            },
-            'GZ at 30° >= 0.20 m': {
-                'value':    self.gz_at_30,
-                'required': 0.20,
-                'passed':   self.gz_at_30 >= 0.20
-            },
-            'Max GZ angle >= 25°': {
-                'value':    self.max_gz_angle,
-                'required': 25.0,
-                'passed':   self.max_gz_angle >= 25.0
-            }
+            'Area  0-30 deg >= 0.055 m*rad':              {'value': self.area_0_30,     'required': 0.055},
+            'Area  0-40 deg / vanishing >= 0.090 m*rad':  {'value': self.area_0_limit,  'required': 0.090},
+            'Area 30-40 deg / vanishing >= 0.030 m*rad':  {'value': self.area_30_limit, 'required': 0.030},
+            'GZ at 30 deg >= 0.200 m':                    {'value': self.gz_at_30,      'required': 0.200},
+            'Max GZ angle >= 25 deg':                     {'value': self.max_gz_angle,  'required': 25.0 },
+            'Initial GM >= 0.150 m':                      {'value': self.GM0,           'required': 0.150},
         }
+        for v in self.criteria.values():
+            v['passed'] = v['value'] >= v['required']
 
-        self.passed_count  = sum(1 for c in self.criteria.values() if c['passed'])
+        self.passed_count   = sum(1 for c in self.criteria.values() if c['passed'])
         self.total_criteria = len(self.criteria)
 
-    def print_solas_results(self):
-        """Print SOLAS results to FreeCAD console"""
-        FreeCAD.Console.PrintMessage("\n" + "=" * 60 + "\n")
-        FreeCAD.Console.PrintMessage("SOLAS/IMO STABILITY CRITERIA CHECK\n")
-        FreeCAD.Console.PrintMessage("=" * 60 + "\n")
-
-        FreeCAD.Console.PrintMessage(
-            f"Max GZ: {self.max_gz:.3f} m at {self.max_gz_angle:.1f}°\n")
-        FreeCAD.Console.PrintMessage(
-            f"Vanishing Stability Angle: {self.vanishing_angle:.1f}°\n")
-        FreeCAD.Console.PrintMessage(
-            f"GZ at 30°: {self.gz_at_30:.3f} m\n\n")
-
-        FreeCAD.Console.PrintMessage("AREA UNDER GZ CURVE:\n")
-        FreeCAD.Console.PrintMessage(
-            f"  0-30°: {self.area_0_30:.4f} m·rad (min: 0.055)\n")
-        FreeCAD.Console.PrintMessage(
-            f"  0-40°/vanishing: {self.area_0_limit:.4f} m·rad (min: 0.09)\n")
-        FreeCAD.Console.PrintMessage(
-            f"  30-40°/vanishing: {self.area_30_limit:.4f} m·rad (min: 0.03)\n\n")
-
-        FreeCAD.Console.PrintMessage("CRITERIA COMPLIANCE:\n")
-        for name, crit in self.criteria.items():
-            status = "PASS" if crit['passed'] else "FAIL"
-            FreeCAD.Console.PrintMessage(
-                f"  {name}: {crit['value']:.4f}  [{status}]\n")
-
-        FreeCAD.Console.PrintMessage(
-            f"\nSUMMARY: {self.passed_count}/{self.total_criteria} criteria passed\n")
-
-        if self.passed_count == self.total_criteria:
-            FreeCAD.Console.PrintMessage(
-                "VESSEL COMPLIES WITH SOLAS/IMO STABILITY REQUIREMENTS\n")
-        else:
-            FreeCAD.Console.PrintMessage(
-                "VESSEL DOES NOT COMPLY WITH SOLAS/IMO STABILITY REQUIREMENTS\n")
-
-        FreeCAD.Console.PrintMessage("=" * 60 + "\n")
-
-        # CSV export (only if spreadsheet was created)
-        if self.sheet is not None:
-            self.export_solas_csv()
+    def _init_empty_solas(self):
+        self.max_gz = self.max_gz_angle = self.vanishing_angle = 0.0
+        self.area_0_30 = self.area_0_limit = self.area_30_limit = 0.0
+        self.gz_at_30  = self.GM0 = 0.0
+        self.cumulative_areas = []
+        self.criteria         = {}
+        self.passed_count     = self.total_criteria = 0
 
     # ------------------------------------------------------------------
-    # Plot
+    # Combined report figure
     # ------------------------------------------------------------------
-
-    def plot_with_area(self, roll, gz):
-        """ Plot the GZ curve with filled area and cumulative area.
-
-        Returns True if plot failed, False if successful.
-        """
-        # FIX 2: PlotAxes removed – it does not exist in modern FreeCAD.
-        #         Axes are obtained via plt.figure.gca() instead.
-        try:
-            from FreeCAD.Plot import Plot
-            FreeCAD.Console.PrintMessage("Using FreeCAD.Plot module\n")
-        except ImportError as e:
-            try:
-                from freecad.plot import Plot
-                FreeCAD.Console.PrintMessage("Using freecad.plot module\n")
-            except ImportError as e2:
-                FreeCAD.Console.PrintWarning(
-                    f"Plot module is disabled or not found: {e}, {e2}\n")
-                return True
-
-        roll = np.array(roll)
-        gz   = np.array(gz)
-
-        positive_mask = roll >= 0
-        roll_pos = roll[positive_mask]
-        gz_pos   = gz[positive_mask]
-
-        if len(roll_pos) == 0:
-            FreeCAD.Console.PrintError("No positive roll angles found!\n")
-            return True
-
-        x_max = max(90.0, np.max(roll_pos))
-        x_min = 0.0
-
-        # --- Create figure ---
-        try:
-            plt = Plot.figure('GZ Curve with Areas')
-            self.plt = plt
-            FreeCAD.Console.PrintMessage(f"Plot figure created: {plt}\n")
-        except Exception as e:
-            FreeCAD.Console.PrintError(f"Failed to create plot figure: {e}\n")
-            self.plt = None
-            return True
-
-        # --- Get matplotlib axes via plt.figure.gca() (no PlotAxes needed) ---
-        ax1 = None
-        try:
-            ax1 = plt.figure.gca()
-            FreeCAD.Console.PrintMessage(
-                f"Got primary axes via plt.figure.gca(): {ax1}\n")
-        except Exception as e:
+    def _create_report_figure(self):
+        mpl, plt = _get_matplotlib()
+        if plt is None:
             FreeCAD.Console.PrintWarning(
-                f"Could not get matplotlib axes: {e}\n")
-            ax1 = None
+                "Matplotlib not available - plot skipped.\n"
+            )
+            return
 
-        # --- GZ curve (thick blue line) ---
         try:
-            gz_plot = Plot.plot(roll_pos, gz_pos, 'GZ [m]')
-            gz_plot.line.set_linestyle('-')
-            gz_plot.line.set_linewidth(2.5)
-            gz_plot.line.set_color((0.0, 0.2, 0.8))
-            self.gz_plot_line = gz_plot
-            FreeCAD.Console.PrintMessage("GZ curve plotted successfully\n")
+            # Default save format -> PDF
+            mpl.rcParams['savefig.format'] = 'pdf'
+
+            import matplotlib.gridspec as gridspec
+            from matplotlib.patches import FancyBboxPatch
+            import datetime
+
+            # ── Figure & GridSpec ────────────────────────────────────────
+            fig = plt.figure(figsize=(11, 14))
+            fig.canvas.manager.set_window_title(
+                "GZ Stability Report  –  click Save (toolbar) to export as PDF"
+            )
+            fig.patch.set_facecolor('#f8f9fa')
+
+            gs = gridspec.GridSpec(
+                3, 1,
+                figure=fig,
+                height_ratios=[0.18, 0.28, 0.54],
+                hspace=0.06,
+                left=0.08, right=0.95,
+                top=0.94, bottom=0.06
+            )
+
+            ax_header   = fig.add_subplot(gs[0])   # Load case summary
+            ax_criteria = fig.add_subplot(gs[1])   # SOLAS criteria table
+            ax_plot     = fig.add_subplot(gs[2])   # GZ chart
+
+            for ax in (ax_header, ax_criteria):
+                ax.axis('off')
+                ax.set_xlim(0, 1)
+                ax.set_ylim(0, 1)
+
+            # ── Helper: draw a rounded box with section title ────────────
+            def _section_box(ax, title):
+                rect = FancyBboxPatch(
+                    (0, 0), 1, 1,
+                    boxstyle="round,pad=0.01",
+                    linewidth=1.2, edgecolor='#adb5bd',
+                    facecolor='white', transform=ax.transAxes,
+                    zorder=0, clip_on=False
+                )
+                ax.add_patch(rect)
+                ax.text(
+                    0.012, 0.94, title,
+                    transform=ax.transAxes,
+                    fontsize=10, fontweight='bold', color='#343a40',
+                    va='top'
+                )
+
+            # ── HEADER: report title + load case fields ──────────────────
+            _section_box(ax_header, "GZ STABILITY ANALYSIS REPORT")
+
+            date_str = datetime.datetime.now().strftime("%Y-%m-%d  %H:%M")
+
+            lc_fields = [
+                ("Date",             date_str),
+                ("Vessel",           str(self.lc_info.get('vessel',     '-'))),
+                ("Load case",        str(self.lc_info.get('load_case',  '-'))),
+                ("Displacement",     f"{self.lc_info.get('displacement','-')} t"),
+                ("VCG",              f"{self.lc_info.get('vcg',  '-')} m"),
+                ("KG",               f"{self.lc_info.get('kg',   '-')} m"),
+                ("Initial GM",       f"{self.GM0:.3f} m  [{self.gm_source}]"),
+                ("Vanishing angle",  f"{self.vanishing_angle:.1f} deg"),
+                ("Max GZ",           f"{self.max_gz:.3f} m  @  {self.max_gz_angle:.1f} deg"),
+            ]
+
+            # Two-column layout
+            col_width = 0.50
+            n_rows    = (len(lc_fields) + 1) // 2
+            row_h     = 0.68 / max(n_rows, 1)
+            fs        = 8.5
+
+            for idx, (label, value) in enumerate(lc_fields):
+                col   = idx % 2
+                row   = idx // 2
+                x_lbl = 0.015 + col * col_width
+                x_val = 0.015 + col * col_width + 0.19
+                y     = 0.82 - row * row_h * 1.28
+                ax_header.text(x_lbl, y, label + ":",
+                               fontsize=fs, color='#6c757d',
+                               transform=ax_header.transAxes, va='top')
+                ax_header.text(x_val, y, value,
+                               fontsize=fs, fontweight='bold', color='#212529',
+                               transform=ax_header.transAxes, va='top')
+
+            # PASS / FAIL badge (top-right)
+            all_pass   = self.passed_count == self.total_criteria
+            badge_col  = '#28a745' if all_pass else '#dc3545'
+            badge_text = (f"PASS  {self.passed_count}/{self.total_criteria}"
+                          if all_pass else
+                          f"FAIL  {self.passed_count}/{self.total_criteria}")
+            ax_header.text(
+                0.976, 0.94, badge_text,
+                transform=ax_header.transAxes,
+                fontsize=11, fontweight='bold', color='white',
+                ha='right', va='top',
+                bbox=dict(boxstyle='round,pad=0.40',
+                          facecolor=badge_col, edgecolor='none')
+            )
+
+            # ── CRITERIA TABLE ───────────────────────────────────────────
+            _section_box(ax_criteria, "IMO / SOLAS Intact Stability Criteria  (IS Code 2008)")
+
+            col_labels = ["Criterion", "Required", "Calculated", "Status"]
+            col_x      = [0.012, 0.56, 0.72, 0.875]
+            header_y   = 0.875
+            row_step   = 0.118
+
+            # Column headers
+            for lbl, cx in zip(col_labels, col_x):
+                ax_criteria.text(
+                    cx, header_y, lbl,
+                    transform=ax_criteria.transAxes,
+                    fontsize=8.5, fontweight='bold', color='#495057',
+                    va='top'
+                )
+            # Separator line below header
+            line_y = header_y - 0.058
+            ax_criteria.plot(
+                [0.008, 0.992], [line_y, line_y],
+                transform=ax_criteria.transAxes,
+                color='#ced4da', linewidth=0.8, clip_on=False
+            )
+
+            for r_idx, (crit_name, crit) in enumerate(self.criteria.items()):
+                y_row  = header_y - 0.068 - r_idx * row_step
+                bg_col = '#f4fff6' if crit['passed'] else '#fff4f4'
+                st_col = '#28a745' if crit['passed'] else '#dc3545'
+                st_txt = 'PASS'   if crit['passed'] else 'FAIL'
+
+                # Alternating row background
+                ax_criteria.fill_between(
+                    [0.005, 0.995],
+                    [y_row - row_step * 0.44] * 2,
+                    [y_row + row_step * 0.44] * 2,
+                    facecolor=bg_col, alpha=0.55,
+                    transform=ax_criteria.transAxes,
+                    zorder=1
+                )
+
+                row_cells = [
+                    (col_x[0], crit_name,                '#212529', 8.2, 'normal'),
+                    (col_x[1], f"{crit['required']:.3f}", '#495057', 8.2, 'normal'),
+                    (col_x[2], f"{crit['value']:.4f}",   '#212529', 8.4, 'bold'  ),
+                    (col_x[3], st_txt,                   st_col,    8.5, 'bold'  ),
+                ]
+                for cx, txt, fc, fs2, fw in row_cells:
+                    ax_criteria.text(
+                        cx, y_row, txt,
+                        transform=ax_criteria.transAxes,
+                        fontsize=fs2, fontweight=fw, color=fc,
+                        va='center', zorder=2
+                    )
+
+            # ── GZ CHART ─────────────────────────────────────────────────
+            COLOR_GZ   = '#1f77b4'
+            COLOR_AREA = '#2ca02c'
+
+            ax_plot.set_facecolor('#fdfdfd')
+
+            x  = np.array(self.roll_deg)
+            y1 = np.array(self.gz_m)
+            y2 = np.array(self.cumulative_areas)
+            mask = x >= 0
+            x, y1, y2 = x[mask], y1[mask], y2[mask]
+
+            if len(x) > 0:
+                # Left axis: GZ curve + fill
+                line1, = ax_plot.plot(
+                    x, y1, color=COLOR_GZ, linewidth=2.2, label='GZ [m]'
+                )
+                ax_plot.fill_between(x, 0, y1, where=(y1 >= 0),
+                                     alpha=0.09, color=COLOR_GZ)
+                ax_plot.axhline(0, color='black', linewidth=0.7)
+                ax_plot.axhline(
+                    y=0.20, color=COLOR_GZ, linewidth=1.0,
+                    linestyle=':', alpha=0.55,
+                    label='Min GZ = 0.20 m'
+                )
+
+                # Right axis: cumulative area
+                ax2    = ax_plot.twinx()
+                line2, = ax2.plot(
+                    x, y2, color=COLOR_AREA, linewidth=2.0,
+                    linestyle='--', label='Cumulative area [m*rad]'
+                )
+                ax2.set_ylabel('Cumulative area [m*rad]',
+                               color=COLOR_AREA, fontsize=10)
+                ax2.tick_params(axis='y', labelcolor=COLOR_AREA)
+
+                # Vertical SOLAS reference lines
+                x_max = float(x[-1])
+                vlines = [
+                    (30.0,                 '#e377c2', '-',   'IMO limit 30 deg'),
+                    (40.0,                 '#d62728', '--',  'IMO limit 40 deg'),
+                    (self.max_gz_angle,    '#ff7f0e', ':',   f'Max GZ ({self.max_gz_angle:.1f} deg)'),
+                    (self.vanishing_angle, '#9467bd', '-.',  f'Vanishing ({self.vanishing_angle:.1f} deg)'),
+                ]
+                vline_handles = []
+                for angle, col, ls, lbl in vlines:
+                    if 0 < angle <= x_max + 1:
+                        h = ax_plot.axvline(
+                            x=angle, color=col, linewidth=1.4,
+                            linestyle=ls, alpha=0.85, label=lbl
+                        )
+                        vline_handles.append(h)
+
+                # Unified legend
+                all_lines = [line1, line2] + vline_handles
+                ax_plot.legend(
+                    handles=all_lines, loc='upper right',
+                    fontsize=8.5, framealpha=0.92
+                )
+
+            ax_plot.set_xlabel('Heel angle [deg]', fontsize=10)
+            ax_plot.set_ylabel('GZ [m]', color=COLOR_GZ, fontsize=10)
+            ax_plot.tick_params(axis='y', labelcolor=COLOR_GZ)
+            ax_plot.set_xlim(left=0)
+            ax_plot.grid(True, linestyle=':', alpha=0.45)
+            ax_plot.set_title('GZ Righting Lever Curve', fontsize=10,
+                              color='#343a40', pad=6)
+
+            # Figure super-title
+            fig.suptitle("GZ Stability Analysis", fontsize=14,
+                         fontweight='bold', color='#212529', y=0.975)
+
+            plt.show(block=False)
+            FreeCAD.Console.PrintMessage(
+                "Report figure ready. Use toolbar Save button to export as PDF.\n"
+            )
+
         except Exception as e:
-            FreeCAD.Console.PrintError(f"Failed to plot GZ curve: {e}\n")
-            return True
-
-        # --- Filled area under GZ curve ---
-        try:
-            zero_crossings = np.where(gz_pos <= 0)[0]
-            fill_end_idx = zero_crossings[0] if len(zero_crossings) > 0 else len(gz_pos)
-
-            if fill_end_idx > 0:
-                roll_fill = roll_pos[:fill_end_idx]
-                gz_fill   = gz_pos[:fill_end_idx]
-
-                if ax1 is not None:
-                    ax1.fill_between(roll_fill, 0, gz_fill,
-                                     alpha=0.3, color='blue',
-                                     label='Area under GZ')
-                    FreeCAD.Console.PrintMessage("Filled area under curve\n")
-                else:
-                    area_line = Plot.plot(roll_fill, gz_fill, '_area_')
-                    area_line.line.set_linewidth(8.0)
-                    area_line.line.set_alpha(0.3)
-                    area_line.line.set_color((0.4, 0.6, 1.0))
-                    FreeCAD.Console.PrintMessage(
-                        "Plotted area as thick line (fallback)\n")
-        except Exception as e:
-            FreeCAD.Console.PrintWarning(f"Could not fill area: {e}\n")
-
-        # --- Secondary Y-axis for cumulative area ---
-        if (hasattr(self, 'cumulative_areas') and
-                len(self.cumulative_areas) == len(roll)):
-            try:
-                cum_areas = np.array(self.cumulative_areas)[positive_mask]
-
-                if ax1 is not None:
-                    ax2 = ax1.twinx()
-                    ax2.plot(roll_pos, cum_areas, 'r--', linewidth=1.5,
-                             label='Cumulative Area [m·rad]')
-                    ax2.set_ylabel('Cumulative Area [m·rad]', color='red')
-                    ax2.tick_params(axis='y', labelcolor='red')
-                    ax2.set_ylim(0, max(cum_areas) * 1.1)
-                    self.ax2 = ax2
-                    FreeCAD.Console.PrintMessage(
-                        "Secondary Y-axis for area created\n")
-                else:
-                    raise Exception("No ax1 available")
-
-            except Exception as e:
-                FreeCAD.Console.PrintWarning(f"Using scaled area fallback: {e}\n")
-                try:
-                    cum_areas = np.array(self.cumulative_areas)[positive_mask]
-                    max_gz    = max(gz_pos)
-                    max_area  = max(cum_areas) if len(cum_areas) > 0 else 1.0
-                    if max_area > 0:
-                        scale_factor  = max_gz / max_area * 0.8
-                        scaled_areas  = cum_areas * scale_factor
-                        area_plot = Plot.plot(roll_pos, scaled_areas,
-                                             f'Area (x{1 / scale_factor:.1f})')
-                        area_plot.line.set_linestyle('--')
-                        area_plot.line.set_linewidth(1.5)
-                        area_plot.line.set_color((0.8, 0.0, 0.0))
-                        FreeCAD.Console.PrintMessage(
-                            "Plotted scaled area on primary axis\n")
-                except Exception as e2:
-                    FreeCAD.Console.PrintWarning(
-                        f"Scaled area fallback also failed: {e2}\n")
-
-        # --- Reference lines at 30°, 40°, vanishing angle ---
-        try:
-            max_y = max(gz_pos) * 1.1 if len(gz_pos) > 0 else 1.0
-
-            if x_max >= 30:
-                l30 = Plot.plot([30, 30], [0, max_y], '30 deg')
-                l30.line.set_linestyle('--')
-                l30.line.set_color((0.0, 0.7, 0.0))
-                l30.line.set_linewidth(1.0)
-
-            if x_max >= 40:
-                l40 = Plot.plot([40, 40], [0, max_y], '40 deg')
-                l40.line.set_linestyle('--')
-                l40.line.set_color((0.8, 0.5, 0.0))
-                l40.line.set_linewidth(1.0)
-
-            if self.vanishing_angle < 90 and self.vanishing_angle <= x_max:
-                lv = Plot.plot(
-                    [self.vanishing_angle, self.vanishing_angle],
-                    [0, max_y],
-                    f'Vanishing ({self.vanishing_angle:.1f} deg)')
-                lv.line.set_linestyle('--')
-                lv.line.set_color((0.8, 0.0, 0.0))
-                lv.line.set_linewidth(1.5)
-
-            FreeCAD.Console.PrintMessage("Added reference lines\n")
-        except Exception as e:
-            FreeCAD.Console.PrintWarning(f"Could not add reference lines: {e}\n")
-
-        # --- Zero line ---
-        try:
-            zl = Plot.plot([x_min, x_max], [0, 0], '_zero_')
-            zl.line.set_linestyle('-')
-            zl.line.set_color('black')
-            zl.line.set_linewidth(0.5)
-        except Exception:
-            pass
-
-        # --- Axis labels and limits ---
-        try:
-            Plot.xlabel('Roll Angle [deg]')
-            Plot.xlim(x_min, x_max)
-        except Exception as e:
-            FreeCAD.Console.PrintWarning(f"Could not set X limits: {e}\n")
-
-        try:
-            Plot.ylabel('GZ [m]')
-            y_min = min(0, min(gz_pos) * 1.1) if len(gz_pos) > 0 else 0
-            y_max = max(gz_pos) * 1.2         if len(gz_pos) > 0 else 1
-            Plot.ylim(y_min, y_max)
-        except Exception as e:
-            FreeCAD.Console.PrintWarning(f"Could not set Y limits: {e}\n")
-
-        # --- Title ---
-        try:
-            title = (f'GZ Stability Curve\n'
-                     f'Max GZ: {self.max_gz:.3f} m at {self.max_gz_angle:.1f} deg | '
-                     f'Area 0-30 deg: {self.area_0_30:.4f} m*rad')
-            Plot.title(title)
-        except Exception as e:
-            FreeCAD.Console.PrintWarning(f"Could not set title: {e}\n")
-
-        # --- Grid & legend ---
-        try:
-            Plot.grid(True)
-        except Exception:
-            pass
-
-        try:
-            Plot.legend(loc='best')
-        except Exception:
-            pass
-
-        # --- Update ---
-        try:
-            plt.update()
-            FreeCAD.Console.PrintMessage("Plot updated successfully\n")
-        except Exception as e:
-            FreeCAD.Console.PrintWarning(f"Could not update plot: {e}\n")
-
-        self.roll_data = roll_pos
-        self.gz_data   = gz_pos
-        return False  # success
-
-    # ------------------------------------------------------------------
-    # update  (called by TaskPanel.py after the object is created)
-    # ------------------------------------------------------------------
-
-    def update(self, roll, gz, draft, trim):
-        """Update the plot and spreadsheet with new data.
-
-        This method is called by TaskPanel.py:
-            plt.update(rolls, gzs, drafts, trims)
-
-        Parameters have the same types as __init__:
-        roll  -- List of roll angles (FreeCAD quantities, deg)
-        gz    -- List of GZ values   (FreeCAD quantities, m)
-        draft -- List of drafts      (FreeCAD quantities, m)
-        trim  -- List of trim angles (FreeCAD quantities, deg)
-        """
-        # Convert FreeCAD quantities to plain floats
-        self.roll_deg = [r.getValueAs('deg').Value for r in roll]
-        self.gz_m     = [l.getValueAs('m').Value   for l in gz]
-        draft_vals    = [t.getValueAs('m').Value   for t in draft]
-        trim_vals     = [t.getValueAs('deg').Value for t in trim]
-
-        # Recalculate SOLAS criteria with new data
-        self.calculate_solas_criteria()
-
-        # Refresh the plot
-        plot_failed = self.plot_with_area(self.roll_deg, self.gz_m)
-        if plot_failed:
-            FreeCAD.Console.PrintWarning(
-                "Plot update failed, but continuing with spreadsheet...\n")
-
-        # Refresh the spreadsheet
-        self.spreadSheet(self.roll_deg, self.gz_m, draft_vals, trim_vals)
-
-        # Print updated SOLAS results
-        self.print_solas_results()
+            FreeCAD.Console.PrintError(f"Error in _create_report_figure: {e}\n")
+            import traceback
+            traceback.print_exc()
 
     # ------------------------------------------------------------------
     # Spreadsheet
     # ------------------------------------------------------------------
-
-    def spreadSheet(self, roll, gz, draft, trim):
-        """Create (or retrieve) the FreeCAD spreadsheet, then fill it."""
+    def spreadSheet(self):
         doc = FreeCAD.ActiveDocument
         if doc is None:
-            FreeCAD.Console.PrintError("No active FreeCAD document!\n")
             return
-
-        # Reuse existing sheet or create a new one
         sheet_obj = doc.getObject("GZ_Results")
         if sheet_obj is None:
             sheet_obj = doc.addObject("Spreadsheet::Sheet", "GZ_Results")
-            FreeCAD.Console.PrintMessage("Created new spreadsheet 'GZ_Results'\n")
-        else:
-            FreeCAD.Console.PrintMessage("Reusing existing spreadsheet 'GZ_Results'\n")
-
         self.sheet = sheet_obj
-        self.fillSpreadSheet(roll, gz, draft, trim)
-
+        self._fill_sheet()
         doc.recompute()
 
-    def fillSpreadSheet(self, roll, gz, draft, trim):
-        """Fill the spreadsheet with GZ data and SOLAS summary."""
-        if self.sheet is None:
-            FreeCAD.Console.PrintError("No spreadsheet available to fill\n")
-            return
+    def _fill_sheet(self):
+        s  = self.sheet
+        n  = len(self.roll_deg)
+        hd = bool(self.disp_kg)
 
-        s = self.sheet
+        headers = ['Roll [deg]', 'GZ [m]', 'Draft [m]', 'Trim [deg]',
+                   'Cumulative area [m*rad]']
+        if hd:
+            headers.append('Displacement [t]')
+        for ci, lbl in enumerate(headers):
+            s.set(f"{chr(ord('A') + ci)}1", lbl)
 
-        # ---------- Header row ----------
-        s.set("A1", "roll [deg]")
-        s.set("B1", "GZ [m]")
-        s.set("C1", "draft [m]")
-        s.set("D1", "trim [deg]")
-        s.set("E1", "Cumulative Area [m*rad]")
-
-        # ---------- Data rows ----------
-        for i, (r, g, d, t) in enumerate(zip(roll, gz, draft, trim)):
-            row = i + 2  # data starts at row 2
-            s.set(f"A{row}", str(r))
-            s.set(f"B{row}", str(g))
-            s.set(f"C{row}", str(d))
-            s.set(f"D{row}", str(t))
-            if hasattr(self, 'cumulative_areas') and i < len(self.cumulative_areas):
-                s.set(f"E{row}", str(self.cumulative_areas[i]))
-            else:
-                s.set(f"E{row}", "")
-
-        # ---------- SOLAS summary block (offset below data) ----------
-        offset = len(roll) + 4  # leave two blank rows
-
-        s.set(f"A{offset}",     "SOLAS/IMO CRITERIA")
-        s.set(f"A{offset + 1}", "Criterion")
-        s.set(f"B{offset + 1}", "Value")
-        s.set(f"C{offset + 1}", "Required")
-        s.set(f"D{offset + 1}", "Result")
-
-        row = offset + 2
-        for name, crit in self.criteria.items():
-            s.set(f"A{row}", name)
-            s.set(f"B{row}", f"{crit['value']:.4f}")
-            s.set(f"C{row}", f"{crit['required']:.4f}")
-            s.set(f"D{row}", "PASS" if crit['passed'] else "FAIL")
-            row += 1
-
-        # Summary line
-        s.set(f"A{row + 1}", "Max GZ [m]")
-        s.set(f"B{row + 1}", f"{self.max_gz:.4f}")
-        s.set(f"A{row + 2}", "Max GZ angle [deg]")
-        s.set(f"B{row + 2}", f"{self.max_gz_angle:.2f}")
-        s.set(f"A{row + 3}", "Vanishing angle [deg]")
-        s.set(f"B{row + 3}", f"{self.vanishing_angle:.2f}")
-        s.set(f"A{row + 4}", "GZ at 30 deg [m]")
-        s.set(f"B{row + 4}", f"{self.gz_at_30:.4f}")
-        s.set(f"A{row + 5}", "Criteria passed")
-        s.set(f"B{row + 5}", f"{self.passed_count}/{self.total_criteria}")
+        for i in range(n):
+            row = i + 2
+            s.set(f"A{row}", "{:.4f}".format(self.roll_deg[i]))
+            s.set(f"B{row}", "{:.6f}".format(self.gz_m[i]))
+            s.set(f"C{row}", "{:.4f}".format(
+                self.draft_m[i] if i < len(self.draft_m) else 0.0))
+            s.set(f"D{row}", "{:.4f}".format(
+                self.trim_deg[i] if i < len(self.trim_deg) else 0.0))
+            s.set(f"E{row}", "{:.6f}".format(
+                self.cumulative_areas[i] if i < len(self.cumulative_areas) else 0.0))
+            if hd and i < len(self.disp_kg):
+                s.set(f"F{row}", "{:.2f}".format(self.disp_kg[i] / 1000))
 
         FreeCAD.Console.PrintMessage(
-            f"Spreadsheet filled with {len(roll)} data rows + SOLAS summary\n")
+            f"Spreadsheet created with {n} rows.\n"
+        )
 
     # ------------------------------------------------------------------
-    # CSV export
+    # Console summary
     # ------------------------------------------------------------------
-
-    def export_solas_csv(self):
-        """Export SOLAS results to a CSV file next to the FreeCAD document."""
-        try:
-            doc = FreeCAD.ActiveDocument
-            if doc is None or not doc.FileName:
-                FreeCAD.Console.PrintWarning(
-                    "Cannot export CSV: document has no file path yet\n")
-                return
-
-            base_dir  = os.path.dirname(doc.FileName)
-            csv_path  = os.path.join(base_dir, "GZ_SOLAS_results.csv")
-
-            with open(csv_path, 'w', encoding='utf-8') as f:
-                f.write("SOLAS/IMO Stability Criteria Results\n\n")
-                f.write("Criterion,Value,Required,Result\n")
-                for name, crit in self.criteria.items():
-                    result = "PASS" if crit['passed'] else "FAIL"
-                    f.write(f"{name},{crit['value']:.4f},"
-                            f"{crit['required']:.4f},{result}\n")
-
-                f.write(f"\nMax GZ [m],{self.max_gz:.4f}\n")
-                f.write(f"Max GZ angle [deg],{self.max_gz_angle:.2f}\n")
-                f.write(f"Vanishing angle [deg],{self.vanishing_angle:.2f}\n")
-                f.write(f"GZ at 30 deg [m],{self.gz_at_30:.4f}\n")
-                f.write(f"Criteria passed,{self.passed_count}/{self.total_criteria}\n")
-
-                f.write("\nRoll [deg],GZ [m],Cumulative Area [m*rad]\n")
-                for i, (r, g) in enumerate(zip(self.roll_deg, self.gz_m)):
-                    ca = self.cumulative_areas[i] if i < len(self.cumulative_areas) else ""
-                    f.write(f"{r:.2f},{g:.4f},{ca:.5f}\n")
-
-            FreeCAD.Console.PrintMessage(f"SOLAS results exported to: {csv_path}\n")
-
-        except Exception as e:
-            FreeCAD.Console.PrintWarning(f"CSV export failed: {e}\n")
+    def print_solas_results(self):
+        sep = "-" * 62
+        FreeCAD.Console.PrintMessage(f"\n{sep}\n")
+        FreeCAD.Console.PrintMessage("  GZ STABILITY ANALYSIS - SOLAS / IS CODE CRITERIA\n")
+        FreeCAD.Console.PrintMessage(f"{sep}\n")
+        for name, crit in self.criteria.items():
+            status = "PASS" if crit['passed'] else "FAIL"
+            FreeCAD.Console.PrintMessage(
+                f"  [{status}]  {name}\n"
+                f"           Actual: {crit['value']:.4f}  |  "
+                f"Required: {crit['required']:.3f}\n"
+            )
+        FreeCAD.Console.PrintMessage(f"{sep}\n")
+        FreeCAD.Console.PrintMessage(
+            f"  Result       : {self.passed_count}/{self.total_criteria} criteria passed\n"
+            f"  Max GZ       : {self.max_gz:.3f} m  @  {self.max_gz_angle:.1f} deg\n"
+            f"  Initial GM   : {self.GM0:.3f} m\n"
+            f"  Vanishing    : {self.vanishing_angle:.1f} deg\n"
+        )
+        FreeCAD.Console.PrintMessage(f"{sep}\n\n")
