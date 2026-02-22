@@ -421,10 +421,6 @@ class RAOs:
                 'ToolTip': ToolTip}
 
 
-# ===========================================================================
-# NEU: Capytaine BEM Mesh erstellen
-# ===========================================================================
-
 class CreateCapytaineMesh:
     """Erstellt ein BEM-Oberflächenmesh für Capytaine Seakeeping-Analyse."""
 
@@ -454,14 +450,147 @@ class CreateCapytaineMesh:
             'Ship_CreateCapytaineMesh',
             'Create a hull surface mesh for Capytaine BEM seakeeping analysis')
         return {
-            'Pixmap':   'ship_mesh',   # → resources/icons/ship_mesh.svg
+            'Pixmap':   'ship_mesh',
             'MenuText': MenuText,
             'ToolTip':  ToolTip,
         }
 
 
 # ===========================================================================
-# Command-Registrierung (alphabetisch nach Command-Name)
+# NEU: Kran-Commands
+# ===========================================================================
+
+class CreateCrane:
+    def IsActive(self):
+        return FreeCAD.ActiveDocument is not None
+
+    def Activated(self):
+        try:
+            from .shipCraneLoadout.TaskCreateCrane import ShipCraneDialog
+            dlg = ShipCraneDialog(FreeCADGui.getMainWindow())
+            dlg.exec_()
+        except Exception as e:
+            FreeCAD.Console.PrintError(f"CreateCrane error: {e}\n")
+            import traceback
+            traceback.print_exc()
+
+    def GetResources(self):
+        MenuText = QT_TRANSLATE_NOOP('Ship_CreateCrane', 'Create Crane')
+        ToolTip  = QT_TRANSLATE_NOOP('Ship_CreateCrane', 'Create a new ship crane')
+        return {'Pixmap': 'Ship_CreateCrane', 'MenuText': MenuText, 'ToolTip': ToolTip}
+
+
+class CoupleCrane:
+    def IsActive(self):
+        return FreeCAD.ActiveDocument is not None
+
+    def Activated(self):
+        try:
+            from .shipCraneLoadout.TaskCreateCrane import couple_crane_to_ship
+            sel    = FreeCADGui.Selection.getSelection()
+            cranes = [o for o in sel
+                      if getattr(getattr(o, 'Proxy', None), 'Type', '') == 'ShipCrane']
+            ships  = [o for o in sel if o not in cranes]
+            if cranes and ships:
+                couple_crane_to_ship(cranes[0], ships[0])
+            else:
+                FreeCAD.Console.PrintWarning("Bitte Kran und Schiff auswählen.\n")
+        except Exception as e:
+            FreeCAD.Console.PrintError(f"CoupleCrane error: {e}\n")
+
+    def GetResources(self):
+        MenuText = QT_TRANSLATE_NOOP('Ship_CoupleCrane', 'Couple Crane')
+        ToolTip  = QT_TRANSLATE_NOOP('Ship_CoupleCrane', 'Couple selected crane to ship')
+        return {'Pixmap': 'Ship_CoupleCrane', 'MenuText': MenuText, 'ToolTip': ToolTip}
+
+
+class DecoupleCrane:
+    def IsActive(self):
+        return FreeCAD.ActiveDocument is not None
+
+    def Activated(self):
+        try:
+            from .shipCraneLoadout.TaskCreateCrane import decouple_crane
+            sel    = FreeCADGui.Selection.getSelection()
+            cranes = [o for o in sel
+                      if getattr(getattr(o, 'Proxy', None), 'Type', '') == 'ShipCrane']
+            if cranes:
+                decouple_crane(cranes[0])
+            else:
+                FreeCAD.Console.PrintWarning("Bitte einen Kran auswählen.\n")
+        except Exception as e:
+            FreeCAD.Console.PrintError(f"DecoupleCrane error: {e}\n")
+
+    def GetResources(self):
+        MenuText = QT_TRANSLATE_NOOP('Ship_DecoupleCrane', 'Decouple Crane')
+        ToolTip  = QT_TRANSLATE_NOOP('Ship_DecoupleCrane', 'Decouple crane from ship')
+        return {'Pixmap': 'Ship_DecoupleCrane', 'MenuText': MenuText, 'ToolTip': ToolTip}
+
+
+class SingleHookLift:
+    def IsActive(self):
+        return FreeCAD.ActiveDocument is not None
+
+    def Activated(self):
+        try:
+            from .shipCraneLoadout.TaskLiftOperation import SingleHookLiftDialog
+            dlg = SingleHookLiftDialog(FreeCADGui.getMainWindow())
+            dlg.exec_()
+        except Exception as e:
+            FreeCAD.Console.PrintError(f"SingleHookLift error: {e}\n")
+            import traceback
+            traceback.print_exc()
+
+    def GetResources(self):
+        MenuText = QT_TRANSLATE_NOOP('Ship_SingleHookLift', 'Single Hook Lift')
+        ToolTip  = QT_TRANSLATE_NOOP('Ship_SingleHookLift', 'Single hook lift operation')
+        return {'Pixmap': 'Ship_SingleHookLift', 'MenuText': MenuText, 'ToolTip': ToolTip}
+
+
+class TandemLift:
+    def IsActive(self):
+        return FreeCAD.ActiveDocument is not None
+
+    def Activated(self):
+        try:
+            from .shipCraneLoadout.TandemLift import show_tandem_lift_dialog
+            show_tandem_lift_dialog()
+        except Exception as e:
+            FreeCAD.Console.PrintError(f"TandemLift error: {e}\n")
+            import traceback
+            traceback.print_exc()
+
+    def GetResources(self):
+        MenuText = QT_TRANSLATE_NOOP('Ship_TandemLift', 'Tandem Lift')
+        ToolTip  = QT_TRANSLATE_NOOP('Ship_TandemLift', 'Tandem lift swing simulation')
+        return {'Pixmap': 'Ship_TandemLift', 'MenuText': MenuText, 'ToolTip': ToolTip}
+
+
+class StabilityMonitorCmd:
+    """Öffnet schwebenden Stabilitätsmonitor für Kran-Operationen."""
+    _monitor_instance = None
+
+    def IsActive(self):
+        return FreeCAD.ActiveDocument is not None
+
+    def Activated(self):
+        try:
+            from .shipSinkAndTrim.StabilityMonitor import show_stability_monitor
+            StabilityMonitorCmd._monitor_instance = show_stability_monitor()
+        except Exception as e:
+            FreeCAD.Console.PrintError(f"StabilityMonitor error: {e}\n")
+            import traceback
+            traceback.print_exc()
+
+    def GetResources(self):
+        MenuText = QT_TRANSLATE_NOOP('Ship_StabilityMonitor', 'Stability Monitor')
+        ToolTip  = QT_TRANSLATE_NOOP('Ship_StabilityMonitor',
+                                     'Open floating stability monitor for crane operations')
+        return {'Pixmap': 'Ship_Monitor', 'MenuText': MenuText, 'ToolTip': ToolTip}
+
+
+# ===========================================================================
+# Command-Registrierung
 # ===========================================================================
 
 FreeCADGui.addCommand('Ship_Read_Packinglist',          CargoStowagePlan())
@@ -482,4 +611,10 @@ FreeCADGui.addCommand('Ship_ResistanceHoltrop',         Holtrop())
 FreeCADGui.addCommand('Ship_ResistanceSavitsky',        Savitsky())
 FreeCADGui.addCommand('Ship_SeakeepingSetMesh',         SetMesh())
 FreeCADGui.addCommand('Ship_SeakeepingRAOs',            RAOs())
-FreeCADGui.addCommand('Ship_CreateCapytaineMesh',       CreateCapytaineMesh())  # NEU
+FreeCADGui.addCommand('Ship_CreateCapytaineMesh',       CreateCapytaineMesh())
+FreeCADGui.addCommand('Ship_CreateCrane',               CreateCrane())
+FreeCADGui.addCommand('Ship_CoupleCrane',               CoupleCrane())
+FreeCADGui.addCommand('Ship_DecoupleCrane',             DecoupleCrane())
+FreeCADGui.addCommand('Ship_SingleHookLift',            SingleHookLift())
+FreeCADGui.addCommand('Ship_TandemLift',                TandemLift())
+FreeCADGui.addCommand('Ship_StabilityMonitor',          StabilityMonitorCmd())

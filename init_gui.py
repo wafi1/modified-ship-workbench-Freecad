@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #***************************************************************************
 #*                                                                         *
 #*   Copyright (c) 2011, 2016 Jose Luis Cercos Pita <jlcercos@gmail.com>   *
@@ -41,8 +42,6 @@ class ShipWorkbench(Gui.Workbench):
             "Ship module provides some of the commonly used tools to design ship forms",
         )
 
-    from . import ShipGui
-
     def Initialize(self):
         QT_TRANSLATE_NOOP = App.Qt.QT_TRANSLATE_NOOP
 
@@ -60,45 +59,63 @@ class ShipWorkbench(Gui.Workbench):
                     )
                 )
         
-        # Importiere hier die Commands, damit sie verfügbar sind
+        # WICHTIG: ShipGui importieren, damit alle Commands registriert werden
         from . import ShipGui
         
-        # ToolBar
+        # ToolBar Listen
         shiplist = [
             #"Ship_LoadExample",
             "Ship_CreateShip",
             "Ship_AreasCurve",
             "Ship_Hydrostatics"
         ]
+        
         weightslist = [
             "Ship_Weight",
             "Ship_Tank",
             "Ship_Capacity",
             "Ship_LoadCondition",
-            "Ship_CalculateLoadCondition",  # NEU
-            "Ship_Read_Packinglist",        # NEU
+            "Ship_CalculateLoadCondition",
+            "Ship_Read_Packinglist",
             "Ship_SinkAndTrim",
             "Ship_GZ"
         ]
+        
+        # KORRIGIERT: Crane-Liste mit den drei neuen Befehlen
+        # Diese Commands müssen in ShipGui.py mit addCommand registriert sein!
+        cranelist = [
+            "Ship_CreateCrane",      # Kran erstellen (Dialog)
+            "Ship_CoupleCrane",      # Kran an Schiff koppeln
+            "Ship_DecoupleCrane",    # Kran entkoppeln
+            "Ship_SingleHookLift",   # Single Hook Lift
+            "Ship_TandemLift",       # Tandem Lift
+            "Ship_StabilityMonitor", # NEU: Stabilitäts-Monitor
+        ]
+        
         resistancelist = [
             "Ship_ResistanceAmadeo",
             "Ship_ResistanceBlountFox",
             "Ship_ResistanceHoltrop",
             "Ship_ResistanceSavitsky"
         ]
+        
         seakeepinglist = [
-            'Ship_CreateCapytaineMesh',
+            "Ship_CreateCapytaineMesh",
             "Ship_SeakeepingSetMesh",
             "Ship_SeakeepingRAOs"
         ]
 
+        # Toolbars erstellen
         self.appendToolbar(QT_TRANSLATE_NOOP("Workbench", "Ship design"), shiplist)
         self.appendToolbar(QT_TRANSLATE_NOOP("Workbench", "Weights"), weightslist)
+        self.appendToolbar(QT_TRANSLATE_NOOP("Workbench", "Crane"), cranelist)
         self.appendToolbar(QT_TRANSLATE_NOOP("Workbench", "Resistance"), resistancelist)
         self.appendToolbar(QT_TRANSLATE_NOOP("Workbench", "Seakeeping"), seakeepinglist)
         
+        # Menüs erstellen
         self.appendMenu(QT_TRANSLATE_NOOP("Workbench", "Ship design"), shiplist)
         self.appendMenu(QT_TRANSLATE_NOOP("Workbench", "Weights"), weightslist)
+        self.appendMenu(QT_TRANSLATE_NOOP("Workbench", "Crane"), cranelist)
         self.appendMenu(QT_TRANSLATE_NOOP("Workbench", "Resistance"), resistancelist)
         self.appendMenu(QT_TRANSLATE_NOOP("Workbench", "Seakeeping"), seakeepinglist)
 
