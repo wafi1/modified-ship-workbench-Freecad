@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-TaskCreateCrane.py - Schiffskran mit UI, Kopplung und Lastfähigkeitsberechnung
+TaskCreateCrane.py - Ship crane with UI, coupling and load capacity calculation
 """
 
 import FreeCAD as App
@@ -18,7 +18,7 @@ def to_float(quantity):
 
 class ShipCrane:
     """
-    FeaturePython Proxy für Schiffskran mit Lastfähigkeitsberechnung.
+    FeaturePython proxy for a ship crane with load capacity calculation.
     """
 
     def __init__(self, obj):
@@ -28,60 +28,60 @@ class ShipCrane:
 
     def _init_properties(self, obj):
         all_props = [
-            # --- Bewegung ---
-            ("App::PropertyFloat",     "SlewAngle",         "Motion",       "Drehwinkel in Grad",                       0.0),
-            ("App::PropertyFloat",     "LuffingAngle",      "Motion",       "Wippwinkel in Grad",                       15.0),
-            # --- Gewichte ---
-            ("App::PropertyFloat",     "BoomWeight",        "Weights",      "Eigengewicht des Booms [t]",               18.0),
-            # --- Geometrie Boom ---
-            ("App::PropertyLength",    "BoomPivotHeight",   "Geometry",     "Höhe des Boom-Drehpunkts",                 2300),
-            ("App::PropertyLength",    "BoomLegWidth",      "Geometry",     "Boom-Beinbreite",                          500),
-            ("App::PropertyLength",    "BoomLegHeight",     "Geometry",     "Boom-Beinhöhe",                            1400),
-            ("App::PropertyLength",    "BoomInnerWidth",    "Geometry",     "Boom-Innenbreite",                         2600),
-            ("App::PropertyLength",    "BoomLength",        "Geometry",     "Boom-Länge",                               30500),
-            ("App::PropertyLength",    "BoomWidthOuterEnd", "Geometry",     "Boom-Breite außen",                        2500),
-            ("App::PropertyLength",    "BoomCGDistance",    "Geometry",     "Boom-Schwerpunkt-Abstand",                 17200),
-            ("App::PropertyLength",    "SheaveWidth",       "Geometry",     "Seilrollen-Breite",                        1800),
-            ("App::PropertyLength",    "SheaveDiameter",    "Geometry",     "Seilrollen-Durchmesser",                   1520),
-            # --- Geometrie Turm / Basis ---
-            ("App::PropertyLength",    "BaseDiameter",      "Geometry",     "Durchmesser der Basis",                    3700),
-            ("App::PropertyLength",    "BaseHeight",        "Geometry",     "Höhe der Basis",                           2300),
-            ("App::PropertyLength",    "TowerHeight",       "Geometry",     "Turmhöhe",                                 10500),
-            ("App::PropertyLength",    "TowerTopDiameter",  "Geometry",     "Turmdurchmesser oben",                     2500),
-            ("App::PropertyLength",    "TowerFlatWidth",    "Geometry",     "Turm-Flachbreite",                         2500),
-            ("App::PropertyLength",    "TowerFlatHeight",   "Geometry",     "Turm-Flachhöhe",                           2300),
-            # --- Kopplung ---
-            ("App::PropertyLink",      "ParentShip",        "Coupling",     "Verknüpftes Schiff",                       None),
-            ("App::PropertyBool",      "IsCoupled",         "Coupling",     "Ist an Schiff gekoppelt",                  False),
-            ("App::PropertyPlacement", "RelativePlacement", "Coupling",     "Position relativ zum Schiff",              None),
-            # --- Lastfähigkeit Modus ---
-            ("App::PropertyBool",      "UseLoadStages",     "LoadCapacity", "Laststufen (True) oder Automatik (False)", True),
-            # --- Laststufen ---
-            ("App::PropertyFloat",     "Stage1_Weight",     "LoadStage1",   "Stufe 1: Maximale Last [t]",               10.0),
-            ("App::PropertyLength",    "Stage1_MinRadius",  "LoadStage1",   "Stufe 1: Minimale Auslage [mm]",           5000),
-            ("App::PropertyLength",    "Stage1_MaxRadius",  "LoadStage1",   "Stufe 1: Maximale Auslage [mm]",           8000),
-            ("App::PropertyFloat",     "Stage2_Weight",     "LoadStage2",   "Stufe 2: Mittlere Last [t]",               6.0),
-            ("App::PropertyLength",    "Stage2_MinRadius",  "LoadStage2",   "Stufe 2: Minimale Auslage [mm]",           8000),
-            ("App::PropertyLength",    "Stage2_MaxRadius",  "LoadStage2",   "Stufe 2: Maximale Auslage [mm]",           15000),
-            ("App::PropertyFloat",     "Stage3_Weight",     "LoadStage3",   "Stufe 3: Minimale Last [t]",               3.0),
-            ("App::PropertyLength",    "Stage3_MinRadius",  "LoadStage3",   "Stufe 3: Minimale Auslage [mm]",           15000),
-            ("App::PropertyLength",    "Stage3_MaxRadius",  "LoadStage3",   "Stufe 3: Maximale Auslage [mm]",           22000),
-            # --- Automatik ---
-            ("App::PropertyFloat",     "Auto_MaxWeight",    "LoadAuto",     "Automatik: Max. Last bei Min-Radius [t]",  10.0),
-            ("App::PropertyLength",    "Auto_MinRadius",    "LoadAuto",     "Automatik: Radius für max. Last [mm]",     5000),
-            ("App::PropertyFloat",     "Auto_MinWeight",    "LoadAuto",     "Automatik: Min. Last bei Max-Radius [t]",  2.0),
-            ("App::PropertyLength",    "Auto_MaxRadius",    "LoadAuto",     "Automatik: Radius für min. Last [mm]",     22000),
+            # --- Motion ---
+            ("App::PropertyFloat",     "SlewAngle",         "Motion",       "Slew angle in degrees",                    0.0),
+            ("App::PropertyFloat",     "LuffingAngle",      "Motion",       "Luffing angle in degrees",                 15.0),
+            # --- Weights ---
+            ("App::PropertyFloat",     "BoomWeight",        "Weights",      "Boom self-weight [t]",                     18.0),
+            # --- Boom geometry ---
+            ("App::PropertyLength",    "BoomPivotHeight",   "Geometry",     "Height of boom pivot",                     2300),
+            ("App::PropertyLength",    "BoomLegWidth",      "Geometry",     "Boom leg width",                           500),
+            ("App::PropertyLength",    "BoomLegHeight",     "Geometry",     "Boom leg height",                          1400),
+            ("App::PropertyLength",    "BoomInnerWidth",    "Geometry",     "Boom inner width",                         2600),
+            ("App::PropertyLength",    "BoomLength",        "Geometry",     "Boom length",                              30500),
+            ("App::PropertyLength",    "BoomWidthOuterEnd", "Geometry",     "Boom width at outer end",                  2500),
+            ("App::PropertyLength",    "BoomCGDistance",    "Geometry",     "Boom CG distance from pivot",              17200),
+            ("App::PropertyLength",    "SheaveWidth",       "Geometry",     "Sheave width",                             1800),
+            ("App::PropertyLength",    "SheaveDiameter",    "Geometry",     "Sheave diameter",                          1520),
+            # --- Tower / base geometry ---
+            ("App::PropertyLength",    "BaseDiameter",      "Geometry",     "Base diameter",                            3700),
+            ("App::PropertyLength",    "BaseHeight",        "Geometry",     "Base height",                              2300),
+            ("App::PropertyLength",    "TowerHeight",       "Geometry",     "Tower height",                             10500),
+            ("App::PropertyLength",    "TowerTopDiameter",  "Geometry",     "Tower top diameter",                       2500),
+            ("App::PropertyLength",    "TowerFlatWidth",    "Geometry",     "Tower flat width",                         2500),
+            ("App::PropertyLength",    "TowerFlatHeight",   "Geometry",     "Tower flat height",                        2300),
+            # --- Coupling ---
+            ("App::PropertyLink",      "ParentShip",        "Coupling",     "Linked ship",                              None),
+            ("App::PropertyBool",      "IsCoupled",         "Coupling",     "Is coupled to ship",                       False),
+            ("App::PropertyPlacement", "RelativePlacement", "Coupling",     "Position relative to ship",                None),
+            # --- Load capacity mode ---
+            ("App::PropertyBool",      "UseLoadStages",     "LoadCapacity", "Load stages (True) or automatic (False)",  True),
+            # --- Load stages ---
+            ("App::PropertyFloat",     "Stage1_Weight",     "LoadStage1",   "Stage 1: maximum load [t]",                10.0),
+            ("App::PropertyLength",    "Stage1_MinRadius",  "LoadStage1",   "Stage 1: minimum radius [mm]",             5000),
+            ("App::PropertyLength",    "Stage1_MaxRadius",  "LoadStage1",   "Stage 1: maximum radius [mm]",             8000),
+            ("App::PropertyFloat",     "Stage2_Weight",     "LoadStage2",   "Stage 2: medium load [t]",                 6.0),
+            ("App::PropertyLength",    "Stage2_MinRadius",  "LoadStage2",   "Stage 2: minimum radius [mm]",             8000),
+            ("App::PropertyLength",    "Stage2_MaxRadius",  "LoadStage2",   "Stage 2: maximum radius [mm]",             15000),
+            ("App::PropertyFloat",     "Stage3_Weight",     "LoadStage3",   "Stage 3: minimum load [t]",                3.0),
+            ("App::PropertyLength",    "Stage3_MinRadius",  "LoadStage3",   "Stage 3: minimum radius [mm]",             15000),
+            ("App::PropertyLength",    "Stage3_MaxRadius",  "LoadStage3",   "Stage 3: maximum radius [mm]",             22000),
+            # --- Automatic ---
+            ("App::PropertyFloat",     "Auto_MaxWeight",    "LoadAuto",     "Automatic: max load at min radius [t]",    10.0),
+            ("App::PropertyLength",    "Auto_MinRadius",    "LoadAuto",     "Automatic: radius for max load [mm]",      5000),
+            ("App::PropertyFloat",     "Auto_MinWeight",    "LoadAuto",     "Automatic: min load at max radius [t]",    2.0),
+            ("App::PropertyLength",    "Auto_MaxRadius",    "LoadAuto",     "Automatic: radius for min load [mm]",      22000),
             # --- Output ---
-            ("App::PropertyFloat",     "CurrentMaxLoad",    "LoadOutput",   "Aktuell erlaubte Maximal-Last [t]",        0.0),
-            ("App::PropertyFloat",     "CurrentLoadMoment", "LoadOutput",   "Aktuelles Lastmoment [tm]",                0.0),
-            ("App::PropertyFloat",     "CurrentRadius",     "LoadOutput",   "Aktuelle Auslage [mm]",                    0.0),
-            ("App::PropertyBool",      "OverloadWarning",   "LoadOutput",   "Überlast-Warnung",                         False),
-            # --- Aussehen ---
-            ("App::PropertyColor",     "CraneColor",        "Appearance",   "Kran-Farbe",                               (1.0, 0.843, 0.0)),
-            ("App::PropertyBool",      "ShowAxes",          "Appearance",   "Achsen anzeigen",                          True),
-            # --- Output Vektoren (WELTKOORDINATEN) ---
-            ("App::PropertyVector",    "SheavePosition",    "Output",       "Seilrollen-Position (Weltkoordinaten mm)", None),
-            ("App::PropertyVector",    "BoomCGPosition",    "Output",       "Boom-Schwerpunkt (Weltkoordinaten mm)",    None),
+            ("App::PropertyFloat",     "CurrentMaxLoad",    "LoadOutput",   "Currently allowed maximum load [t]",       0.0),
+            ("App::PropertyFloat",     "CurrentLoadMoment", "LoadOutput",   "Current load moment [tm]",                 0.0),
+            ("App::PropertyFloat",     "CurrentRadius",     "LoadOutput",   "Current radius [mm]",                      0.0),
+            ("App::PropertyBool",      "OverloadWarning",   "LoadOutput",   "Overload warning",                         False),
+            # --- Appearance ---
+            ("App::PropertyColor",     "CraneColor",        "Appearance",   "Crane colour",                             (1.0, 0.843, 0.0)),
+            ("App::PropertyBool",      "ShowAxes",          "Appearance",   "Show axes",                                True),
+            # --- Output vectors (world coordinates) ---
+            ("App::PropertyVector",    "SheavePosition",    "Output",       "Sheave position (world coordinates mm)",   None),
+            ("App::PropertyVector",    "BoomCGPosition",    "Output",       "Boom CG position (world coordinates mm)",  None),
         ]
 
         added = []
@@ -112,8 +112,6 @@ class ShipCrane:
         try:
             self._init_properties(obj)
 
-            # ── Kopplung: Placement aus Schiff berechnen ──────────────────────
-            # KEIN setExpression – das kollidiert mit FeaturePython.execute()!
             if (getattr(obj, 'IsCoupled', False) and
                     getattr(obj, 'ParentShip', None) is not None):
                 try:
@@ -121,7 +119,7 @@ class ShipCrane:
                     obj.Placement = ship.Placement * obj.RelativePlacement
                 except Exception as e:
                     App.Console.PrintWarning(
-                        f"  Kopplung: Placement-Update fehlgeschlagen: {e}\n")
+                        f"  Coupling: placement update failed: {e}\n")
 
             required_props = [
                 "TowerHeight", "BaseDiameter", "BaseHeight", "TowerTopDiameter",
@@ -217,13 +215,13 @@ class ShipCrane:
             self._update_load_capacity(obj)
 
         except Exception as e:
-            App.Console.PrintError("Fehler in execute: " + str(e) + "\n")
+            App.Console.PrintError("Error in execute: " + str(e) + "\n")
             import traceback
             traceback.print_exc()
         finally:
             self._recomputing = False
 
-    # ── Geometrie ─────────────────────────────────────────────────────────────
+    # ── Geometry ──────────────────────────────────────────────────────────────
 
     def _create_tower(self, base_h, tower_h, base_dia, top_dia, flat_w, flat_h):
         try:
@@ -240,7 +238,7 @@ class ShipCrane:
                 App.Vector(half_flat - 50, -(base_dia + 200) / 2, base_h - 50))
             return tower.cut(left_cut).cut(right_cut)
         except Exception as e:
-            App.Console.PrintError("Turm Fehler: " + str(e) + "\n")
+            App.Console.PrintError("Tower error: " + str(e) + "\n")
             return None
 
     def _create_boom(self, base_h, pivot_h, leg_w, leg_h,
@@ -287,7 +285,7 @@ class ShipCrane:
                 App.Vector(left_end_x - leg_w/2,
                            end_y + y_offset - 200, end_z - 150)))
         except Exception as e:
-            App.Console.PrintError("Boom Fehler: " + str(e) + "\n")
+            App.Console.PrintError("Boom error: " + str(e) + "\n")
         return shapes
 
     def _create_sheave(self, base_h, pivot_h, boom_len,
@@ -322,18 +320,10 @@ class ShipCrane:
             pass
         return shapes
 
-    # ── Positions-Update ──────────────────────────────────────────────────────
+    # ── Position update ───────────────────────────────────────────────────────
 
     def _update_positions(self, obj, slew_angle_rad, luffing_angle_rad,
                           base_h, pivot_h, boom_len, cg_dist):
-        """
-        Berechnet SheavePosition und BoomCGPosition in WELTKOORDINATEN (mm).
-
-        Ablauf:
-          1. Lokale Position relativ zum Kranfuß (Kran-KS, Y = Boom-Richtung)
-          2. Drehung um Slew-Winkel → immer noch im Kran-KS
-          3. Kranfuß-Weltposition (obj.Placement.Base) addieren → Weltkoordinaten
-        """
         try:
             base_h_f   = to_float(base_h)
             pivot_h_f  = to_float(pivot_h)
@@ -344,25 +334,20 @@ class ShipCrane:
             cos_s = math.cos(slew_angle_rad)
             sin_s = math.sin(slew_angle_rad)
 
-            # ── Kranfuß in Weltkoordinaten ────────────────────────────────────
-            crane_world = obj.Placement.Base   # App.Vector in mm
+            crane_world = obj.Placement.Base
             wx = crane_world.x
             wy = crane_world.y
             wz = crane_world.z
 
-            # ── Sheave (Seilrolle) ────────────────────────────────────────────
-            # Lokal: Y zeigt in Boom-Richtung (vor Slew-Rotation)
             sl_y = boom_len_f * math.cos(luffing_angle_rad)
             sl_z = pivot_z + boom_len_f * math.sin(luffing_angle_rad)
 
-            # Nach Slew-Rotation + Kranfuß-Offset
             if hasattr(obj, "SheavePosition"):
                 obj.SheavePosition = App.Vector(
                     wx + (-sl_y * sin_s),
                     wy + ( sl_y * cos_s),
                     wz +   sl_z)
 
-            # ── BoomCG ────────────────────────────────────────────────────────
             cg_y = cg_dist_f * math.cos(luffing_angle_rad)
             cg_z = pivot_z + cg_dist_f * math.sin(luffing_angle_rad)
 
@@ -372,14 +357,13 @@ class ShipCrane:
                     wy + ( cg_y * cos_s),
                     wz +   cg_z)
 
-            # ── Debug (nur bei Änderung) ──────────────────────────────────────
             if not hasattr(self, '_last_pos_debug'):
                 self._last_pos_debug = None
             new_debug = (round(wx), round(wy))
             if self._last_pos_debug != new_debug:
                 App.Console.PrintMessage(
-                    f"  Kranfuß Welt: ({wx/1000:.2f}, {wy/1000:.2f}, {wz/1000:.2f}) m\n"
-                    f"  Sheave Welt:  "
+                    f"  Crane foot world: ({wx/1000:.2f}, {wy/1000:.2f}, {wz/1000:.2f}) m\n"
+                    f"  Sheave world:     "
                     f"({(wx + (-sl_y*sin_s))/1000:.2f}, "
                     f"{(wy + (sl_y*cos_s))/1000:.2f}, "
                     f"{(wz + sl_z)/1000:.2f}) m\n")
@@ -387,7 +371,7 @@ class ShipCrane:
 
         except Exception as e:
             App.Console.PrintError(
-                "Fehler in _update_positions: " + str(e) + "\n")
+                "Error in _update_positions: " + str(e) + "\n")
 
     def _update_load_capacity(self, obj):
         try:
@@ -395,7 +379,6 @@ class ShipCrane:
                 return
             sheave_pos = obj.SheavePosition
 
-            # Radius = horizontale Distanz Kranfuß → Sheave (ohne Weltversatz!)
             crane_world = obj.Placement.Base
             dx = sheave_pos.x - crane_world.x
             dy = sheave_pos.y - crane_world.y
@@ -433,40 +416,29 @@ class ShipCrane:
                 self._last_load_debug = 0
             current_load = round(max_load_t * 10)
             if self._last_load_debug != current_load:
-                mode = "Stufen" if obj.UseLoadStages else "Automatik"
+                mode = "Stages" if obj.UseLoadStages else "Automatic"
                 App.Console.PrintMessage(
-                    f"  Lastfähigkeit ({mode}): {max_load_t:.1f}t "
-                    f"bei {radius_m:.2f}m Auslage\n")
+                    f"  Capacity ({mode}): {max_load_t:.1f}t "
+                    f"at {radius_m:.2f}m radius\n")
                 self._last_load_debug = current_load
 
         except Exception as e:
-            App.Console.PrintError("Lastberechnungsfehler: " + str(e) + "\n")
+            App.Console.PrintError("Load capacity error: " + str(e) + "\n")
 
     def check_load(self, obj, actual_load_t):
         max_allowed = obj.CurrentMaxLoad
         is_allowed  = actual_load_t <= max_allowed
         radius_m    = obj.CurrentRadius / 1000.0 if obj.CurrentRadius > 0 else 0
         if is_allowed:
-            msg = (f"OK: Last {actual_load_t}t erlaubt bei {radius_m}m"
+            msg = (f"OK: Load {actual_load_t}t allowed at {radius_m}m"
                    if max_allowed > 0
-                   else f"Warnung: Radius {radius_m}m außerhalb Bereich")
+                   else f"Warning: Radius {radius_m}m outside range")
         else:
-            msg = f"ÜBERLAST! {actual_load_t}t > max {max_allowed}t"
+            msg = f"OVERLOAD! {actual_load_t}t > max {max_allowed}t"
         obj.OverloadWarning = not is_allowed
         return is_allowed, max_allowed, msg
 
     def onChanged(self, obj, prop):
-        """
-        Reagiert auf Property-Änderungen.
-
-        WICHTIG: KEIN obj.Document.recompute() hier!
-        Das würde eine Endlosschleife auslösen:
-          onChanged → recompute → execute → Property setzen → onChanged → ...
-
-        Stattdessen: obj.touch() markiert das Objekt als "veraltet".
-        FreeCAD führt den nächsten recompute dann automatisch durch
-        (z.B. nach dem nächsten User-Ereignis oder explizitem doc.recompute()).
-        """
         trigger_props = [
             "SlewAngle", "LuffingAngle", "UseLoadStages",
             "Stage1_Weight", "Stage1_MinRadius", "Stage1_MaxRadius",
@@ -476,7 +448,7 @@ class ShipCrane:
         ]
         if prop in trigger_props:
             if not getattr(self, '_recomputing', False):
-                obj.touch()   # ← markiert als dirty, KEIN direktes recompute!
+                obj.touch()
 
     def __getstate__(self):
         return self.Type
@@ -493,7 +465,7 @@ class ShipCrane:
 class ShipCraneDialog(QtGui.QDialog):
     def __init__(self, parent=None):
         super(ShipCraneDialog, self).__init__(parent)
-        self.setWindowTitle("Ship Crane erstellen")
+        self.setWindowTitle("Create Ship Crane")
         self.setMinimumWidth(450)
         self.crane = None
         self.ship  = None
@@ -510,57 +482,57 @@ class ShipCraneDialog(QtGui.QDialog):
         # ── Name ─────────────────────────────────────────────────────────────
         name_group  = QtGui.QGroupBox("Name")
         name_layout = QtGui.QHBoxLayout()
-        name_layout.addWidget(QtGui.QLabel("Kran-Name:"))
+        name_layout.addWidget(QtGui.QLabel("Crane name:"))
         self.name_input = QtGui.QLineEdit("ShipCrane")
         name_layout.addWidget(self.name_input)
         name_group.setLayout(name_layout)
         layout.addWidget(name_group)
 
-        # ── Kopplung ─────────────────────────────────────────────────────────
-        ship_group  = QtGui.QGroupBox("Kopplung zum Schiff")
+        # ── Coupling ─────────────────────────────────────────────────────────
+        ship_group  = QtGui.QGroupBox("Coupling to ship")
         ship_layout = QtGui.QVBoxLayout()
         self.ship_combo = QtGui.QComboBox()
-        self.ship_combo.addItem("-- Kein Schiff --")
+        self.ship_combo.addItem("-- No ship --")
         ship_layout.addWidget(self.ship_combo)
         pos_note = QtGui.QLabel(
-            "ℹ️  Kran zuerst erstellen, dann an die gewünschte\n"
-            "    Position auf dem Schiff verschieben.\n"
-            "    Danach couple_crane_to_ship() aufrufen.")
+            "ℹ️  Create the crane first, then move it to the\n"
+            "    desired position on the ship.\n"
+            "    Then call couple_crane_to_ship().")
         pos_note.setStyleSheet("color: #666; font-size: 10px;")
         ship_layout.addWidget(pos_note)
         ship_group.setLayout(ship_layout)
         layout.addWidget(ship_group)
 
-        # ── Bewegung ─────────────────────────────────────────────────────────
-        motion_group  = QtGui.QGroupBox("Bewegung")
+        # ── Motion ───────────────────────────────────────────────────────────
+        motion_group  = QtGui.QGroupBox("Motion")
         motion_layout = QtGui.QFormLayout()
         self.slew_input = QtGui.QDoubleSpinBox()
         self.slew_input.setRange(0, 360); self.slew_input.setValue(0)
         self.slew_input.setSuffix(" °")
-        motion_layout.addRow("Drehwinkel:", self.slew_input)
+        motion_layout.addRow("Slew angle:", self.slew_input)
         self.luffing_input = QtGui.QDoubleSpinBox()
         self.luffing_input.setRange(0, 90); self.luffing_input.setValue(15)
         self.luffing_input.setSuffix(" °")
-        motion_layout.addRow("Wippwinkel:", self.luffing_input)
+        motion_layout.addRow("Luffing angle:", self.luffing_input)
         motion_group.setLayout(motion_layout)
         layout.addWidget(motion_group)
 
-        # ── Gewichte ─────────────────────────────────────────────────────────
-        weights_group  = QtGui.QGroupBox("Gewichte")
+        # ── Weights ──────────────────────────────────────────────────────────
+        weights_group  = QtGui.QGroupBox("Weights")
         weights_layout = QtGui.QFormLayout()
         self.boom_weight_input = QtGui.QDoubleSpinBox()
         self.boom_weight_input.setRange(0.0, 500.0); self.boom_weight_input.setValue(18.0)
         self.boom_weight_input.setSuffix(" t"); self.boom_weight_input.setDecimals(2)
-        weights_layout.addRow("Boom-Eigengewicht:", self.boom_weight_input)
+        weights_layout.addRow("Boom self-weight:", self.boom_weight_input)
         weights_group.setLayout(weights_layout)
         layout.addWidget(weights_group)
 
-        # ── Lastfähigkeit ─────────────────────────────────────────────────────
-        load_group  = QtGui.QGroupBox("Lastfähigkeit")
+        # ── Load capacity ─────────────────────────────────────────────────────
+        load_group  = QtGui.QGroupBox("Load Capacity")
         load_layout = QtGui.QVBoxLayout()
         self.load_mode_combo = QtGui.QComboBox()
-        self.load_mode_combo.addItem("Laststufen (3 Stufen)", "stages")
-        self.load_mode_combo.addItem("Automatik (Moment)",    "auto")
+        self.load_mode_combo.addItem("Load stages (3 stages)", "stages")
+        self.load_mode_combo.addItem("Automatic (moment)",     "auto")
         load_layout.addWidget(self.load_mode_combo)
         self.load_stack = QtGui.QStackedWidget()
 
@@ -568,17 +540,17 @@ class ShipCraneDialog(QtGui.QDialog):
         stages_layout = QtGui.QVBoxLayout()
         for stage_num, (w_def, r_min_def, r_max_def) in enumerate(
                 [(10.0, 5000, 8000), (6.0, 8000, 15000), (3.0, 15000, 22000)], 1):
-            sg  = QtGui.QGroupBox(f"Stufe {stage_num}")
+            sg  = QtGui.QGroupBox(f"Stage {stage_num}")
             sfl = QtGui.QFormLayout()
             w_spin = QtGui.QDoubleSpinBox()
             w_spin.setRange(0.1, 1000); w_spin.setValue(w_def); w_spin.setSuffix(" t")
-            sfl.addRow("Max. Last:", w_spin)
+            sfl.addRow("Max. load:", w_spin)
             r_min_spin = QtGui.QSpinBox()
             r_min_spin.setRange(1000, 100000); r_min_spin.setValue(r_min_def)
-            r_min_spin.setSuffix(" mm"); sfl.addRow("Min. Radius:", r_min_spin)
+            r_min_spin.setSuffix(" mm"); sfl.addRow("Min. radius:", r_min_spin)
             r_max_spin = QtGui.QSpinBox()
             r_max_spin.setRange(1000, 100000); r_max_spin.setValue(r_max_def)
-            r_max_spin.setSuffix(" mm"); sfl.addRow("Max. Radius:", r_max_spin)
+            r_max_spin.setSuffix(" mm"); sfl.addRow("Max. radius:", r_max_spin)
             sg.setLayout(sfl); stages_layout.addWidget(sg)
             setattr(self, f"s{stage_num}_weight", w_spin)
             setattr(self, f"s{stage_num}_min_r",  r_min_spin)
@@ -591,16 +563,16 @@ class ShipCraneDialog(QtGui.QDialog):
         auto_form   = QtGui.QFormLayout()
         self.auto_max_w = QtGui.QDoubleSpinBox()
         self.auto_max_w.setRange(0.1, 1000); self.auto_max_w.setValue(10.0)
-        self.auto_max_w.setSuffix(" t"); auto_form.addRow("Max. Last:", self.auto_max_w)
+        self.auto_max_w.setSuffix(" t"); auto_form.addRow("Max. load:", self.auto_max_w)
         self.auto_min_r = QtGui.QSpinBox()
         self.auto_min_r.setRange(1000, 100000); self.auto_min_r.setValue(5000)
-        self.auto_min_r.setSuffix(" mm"); auto_form.addRow("Min. Radius:", self.auto_min_r)
+        self.auto_min_r.setSuffix(" mm"); auto_form.addRow("Min. radius:", self.auto_min_r)
         self.auto_min_w = QtGui.QDoubleSpinBox()
         self.auto_min_w.setRange(0.1, 1000); self.auto_min_w.setValue(2.0)
-        self.auto_min_w.setSuffix(" t"); auto_form.addRow("Min. Last:", self.auto_min_w)
+        self.auto_min_w.setSuffix(" t"); auto_form.addRow("Min. load:", self.auto_min_w)
         self.auto_max_r = QtGui.QSpinBox()
         self.auto_max_r.setRange(1000, 100000); self.auto_max_r.setValue(22000)
-        self.auto_max_r.setSuffix(" mm"); auto_form.addRow("Max. Radius:", self.auto_max_r)
+        self.auto_max_r.setSuffix(" mm"); auto_form.addRow("Max. radius:", self.auto_max_r)
         auto_layout.addLayout(auto_form); auto_layout.addStretch()
         auto_widget.setLayout(auto_layout)
         self.load_stack.addWidget(auto_widget)
@@ -612,10 +584,10 @@ class ShipCraneDialog(QtGui.QDialog):
 
         # ── Buttons ───────────────────────────────────────────────────────────
         button_layout = QtGui.QHBoxLayout()
-        self.create_btn = QtGui.QPushButton("Kran erstellen")
+        self.create_btn = QtGui.QPushButton("Create crane")
         self.create_btn.setDefault(True)
         self.create_btn.clicked.connect(self.createCrane)
-        cancel_btn = QtGui.QPushButton("Abbrechen")
+        cancel_btn = QtGui.QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)
         button_layout.addStretch()
         button_layout.addWidget(self.create_btn)
@@ -693,15 +665,15 @@ class ShipCraneDialog(QtGui.QDialog):
 
         doc.recompute()
 
-        mode_str = "Laststufen" if is_stages else "Automatik"
+        mode_str = "Load stages" if is_stages else "Automatic"
         App.Console.PrintMessage(
-            f"Kran '{self.crane.Name}' erstellt ({mode_str})\n"
-            f"  → Position verschieben, dann couple_crane_to_ship() aufrufen.\n")
+            f"Crane '{self.crane.Name}' created ({mode_str})\n"
+            f"  → Move to desired position, then call couple_crane_to_ship().\n")
         self.accept()
 
 
 # =============================================================================
-# HILFSFUNKTIONEN FÜR EXTERNEN ZUGRIFF
+# HELPER FUNCTIONS
 # =============================================================================
 
 def create_ship_crane_simple(name="ShipCrane"):
@@ -715,20 +687,19 @@ def create_ship_crane_simple(name="ShipCrane"):
         crane.ViewObject.ShapeColor = (1.0, 0.843, 0.0)
         crane.ViewObject.Visibility = True
     doc.recompute()
-    App.Console.PrintMessage(f"Kran '{crane.Name}' erstellt\n")
+    App.Console.PrintMessage(f"Crane '{crane.Name}' created\n")
     return crane
 
 
 def couple_crane_to_ship(crane_obj, ship_obj):
     """
-    Koppelt einen Kran an ein Schiff.
-    AUFRUF: NACHDEM der Kran an die endgültige Position verschoben wurde!
+    Couples a crane to a ship.
+    CALL THIS after the crane has been moved to its final position!
     """
     try:
         if not crane_obj or not ship_obj:
             return False
 
-        # Alte Expression entfernen falls vorhanden
         try:
             crane_obj.setExpression("Placement", None)
         except Exception:
@@ -745,21 +716,21 @@ def couple_crane_to_ship(crane_obj, ship_obj):
         crane_obj.IsCoupled         = True
 
         App.Console.PrintMessage(
-            f"  {crane_obj.Name} gekoppelt an {ship_obj.Name}\n"
+            f"  {crane_obj.Name} coupled to {ship_obj.Name}\n"
             f"  RelativePlacement: {rel_placement.Base}\n")
 
         crane_obj.Document.recompute()
         return True
 
     except Exception as e:
-        App.Console.PrintError(f"Kopplungsfehler: {e}\n")
+        App.Console.PrintError(f"Coupling error: {e}\n")
         return False
 
 
 def decouple_crane(crane_obj):
     """
-    Entkoppelt einen Kran vom Schiff.
-    Die aktuelle Weltposition bleibt erhalten.
+    Decouples a crane from the ship.
+    The current world position is preserved.
     """
     try:
         try:
@@ -773,12 +744,12 @@ def decouple_crane(crane_obj):
         crane_obj.Placement  = world_placement
 
         App.Console.PrintMessage(
-            f"  {crane_obj.Name} entkoppelt – "
-            f"Position eingefroren: {world_placement.Base}\n")
+            f"  {crane_obj.Name} decoupled – "
+            f"position frozen: {world_placement.Base}\n")
 
         crane_obj.Document.recompute()
         return True
 
     except Exception as e:
-        App.Console.PrintError(f"Entkopplungsfehler: {e}\n")
+        App.Console.PrintError(f"Decoupling error: {e}\n")
         return False

@@ -1,10 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-TandemLift.py - Tandem Lift Operation + Interaktive Schwingsimulation
-Kombiniert:
-  - TandemLiftCalculator / TandemGeometrySolver / TandemLiftOperation
-  - LoadVisual / SwingCirclesVisual / InteractiveSwingSimulator
-  - LoadCondition Export mit automatischer Stabilitätskette (NEU)
+TandemLift.py - Tandem Lift Operation + Interactive Swing Simulation
 """
 
 import FreeCAD as App
@@ -13,43 +9,41 @@ from PySide import QtGui, QtCore
 import math
 import copy
 
-# NUR TaskLiftOperation importieren - NICHT MonopileSwing!
 try:
     from .TaskLiftOperation import SingleHookLift
 except ImportError:
     from TaskLiftOperation import SingleHookLift
 
-# NEU: Import der erweiterten Spreadsheet-Tools mit Stabilitätskette
 try:
     from .CraneSpreadsheetTools import (
-        find_loadcondition, 
-        get_crane_positions, 
-        transfer_crane_data_and_calculate  # NEU: Hauptfunktion mit Kette
+        find_loadcondition,
+        get_crane_positions,
+        transfer_crane_data_and_calculate
     )
 except ImportError:
     from CraneSpreadsheetTools import (
-        find_loadcondition, 
-        get_crane_positions, 
-        transfer_crane_data_and_calculate  # NEU: Hauptfunktion mit Kette
+        find_loadcondition,
+        get_crane_positions,
+        transfer_crane_data_and_calculate
     )
 
 
 # =============================================================================
-# LASTVERTEILUNG
+# LOAD DISTRIBUTION
 # =============================================================================
 
 class TandemLiftCalculator:
     """
-    Berechnet die Lastverteilung auf zwei Kräne bei Tandem-Operation.
+    Calculates load distribution on two cranes for tandem operation.
 
-    Physik (Momentengleichgewicht):
+    Physics (moment equilibrium):
         F1 + F2 = W
         F1 * d1 = F2 * d2
         → F1 = W * d2 / (d1 + d2)
         → F2 = W * d1 / (d1 + d2)
 
-    d1 = Abstand COG zu Liftpunkt 1
-    d2 = Abstand COG zu Liftpunkt 2
+    d1 = distance COG to lift point 1
+    d2 = distance COG to lift point 2
     """
 
     def __init__(self):
@@ -71,7 +65,7 @@ class TandemLiftCalculator:
         self.cog_outside    = False
 
         if self.total_distance < 0.001:
-            self.warnings.append("Abstand zwischen Liftpunkten zu klein!")
+            self.warnings.append("Distance between lift points too small!")
             return 0, 0, self.warnings
 
         self.load_1 = total_weight_t * self.distance_2 / self.total_distance
@@ -79,11 +73,11 @@ class TandemLiftCalculator:
 
         if self.load_1 > total_weight_t * 0.90:
             self.warnings.append(
-                f"Kran 1 trägt {self.load_1/total_weight_t*100:.0f}% – sehr ungleiche Verteilung!"
+                f"Crane 1 carries {self.load_1/total_weight_t*100:.0f}% – very unequal distribution!"
             )
         if self.load_2 > total_weight_t * 0.90:
             self.warnings.append(
-                f"Kran 2 trägt {self.load_2/total_weight_t*100:.0f}% – sehr ungleiche Verteilung!"
+                f"Crane 2 carries {self.load_2/total_weight_t*100:.0f}% – very unequal distribution!"
             )
 
         return self.load_1, self.load_2, self.warnings
@@ -97,16 +91,16 @@ class TandemLiftCalculator:
             d2 = l1_to_l2_m + abs(cog_to_l1_m)
             self.cog_outside = True
             self.warnings.append(
-                "COG liegt VOR Liftpunkt 1 – Kran 1 muss nach außen gezogen werden! "
-                "Absicherung erforderlich."
+                "COG is AHEAD of lift point 1 – Crane 1 must be pulled outward! "
+                "Securing required."
             )
         elif cog_to_l1_m > l1_to_l2_m:
             d1 = l1_to_l2_m + (cog_to_l1_m - l1_to_l2_m)
             d2 = 0.0
             self.cog_outside = True
             self.warnings.append(
-                "COG liegt HINTER Liftpunkt 2 – Kran 2 muss nach außen gezogen werden! "
-                "Absicherung erforderlich."
+                "COG is BEHIND lift point 2 – Crane 2 must be pulled outward! "
+                "Securing required."
             )
         else:
             d1 = cog_to_l1_m
@@ -116,39 +110,34 @@ class TandemLiftCalculator:
 
     def get_summary(self):
         if self.total_distance < 0.001:
-            return "Keine Berechnung möglich."
+            return "Calculation not possible."
 
         pct1 = self.load_1 / self.total_weight * 100 if self.total_weight > 0 else 0
         pct2 = self.load_2 / self.total_weight * 100 if self.total_weight > 0 else 0
 
         lines = [
-            f"Gesamtgewicht:  {self.total_weight:.1f} t",
-            f"Abstand L1–L2:  {self.total_distance:.2f} m",
-            f"  COG → L1:     {self.distance_1:.2f} m  ({self.distance_1/self.total_distance*100:.0f}%)",
-            f"  COG → L2:     {self.distance_2:.2f} m  ({self.distance_2/self.total_distance*100:.0f}%)",
+            f"Total weight:   {self.total_weight:.1f} t",
+            f"Distance L1-L2: {self.total_distance:.2f} m",
+            f"  COG to L1:    {self.distance_1:.2f} m  ({self.distance_1/self.total_distance*100:.0f}%)",
+            f"  COG to L2:    {self.distance_2:.2f} m  ({self.distance_2/self.total_distance*100:.0f}%)",
             "",
-            f"Kran 1 (L1):  {self.load_1:.2f} t  ({pct1:.1f}%)",
-            f"Kran 2 (L2):  {self.load_2:.2f} t  ({pct2:.1f}%)",
+            f"Crane 1 (L1):  {self.load_1:.2f} t  ({pct1:.1f}%)",
+            f"Crane 2 (L2):  {self.load_2:.2f} t  ({pct2:.1f}%)",
         ]
         if self.warnings:
-            lines += ["", "Warnungen:"] + [f"  ⚠  {w}" for w in self.warnings]
+            lines += ["", "Warnings:"] + [f"  ⚠  {w}" for w in self.warnings]
         return "\n".join(lines)
 
 
 # =============================================================================
-# GEOMETRIE-LÖSER
+# GEOMETRY SOLVER
 # =============================================================================
 
 class TandemGeometrySolver:
     """
-    Berechnet die Slew-Winkel beider Kräne so, dass:
-      1. der Abstand der Baumspitzen dem Liftpunkt-Abstand entspricht,
-      2. beide Bäume so weit wie möglich Richtung Land zeigen.
-
-    Koordinatensystem:
-        tip_x = crane_x - r * sin(α_rad)
-        tip_y = crane_y + r * cos(α_rad)
-        α = 0° → +Y, α = 180° → −Y (Land)
+    Calculates slew angles for both cranes so that:
+      1. the boom tip distance matches the lift point distance,
+      2. both booms point as far as possible toward land.
     """
 
     def __init__(self, crane_1_pos, crane_2_pos):
@@ -225,13 +214,13 @@ class TandemGeometrySolver:
         dist = math.sqrt((T1[0]-T2[0])**2 + (T1[1]-T2[1])**2)
 
         lines = [
-            f"Kran 1: Position ({self.p1[0]/1000:.1f}m, {self.p1[1]/1000:.1f}m)  "
-            f"Slew {slew_1:.1f}°  Auslage {r1/1000:.2f}m",
-            f"  Baumspitze: ({T1[0]/1000:.2f}m, {T1[1]/1000:.2f}m)",
-            f"Kran 2: Position ({self.p2[0]/1000:.1f}m, {self.p2[1]/1000:.1f}m)  "
-            f"Slew {slew_2:.1f}°  Auslage {r2/1000:.2f}m",
-            f"  Baumspitze: ({T2[0]/1000:.2f}m, {T2[1]/1000:.2f}m)",
-            f"Baumspitzen-Abstand: {dist/1000:.3f}m  (gefordert: {required_dist/1000:.3f}m)",
+            f"Crane 1: Position ({self.p1[0]/1000:.1f}m, {self.p1[1]/1000:.1f}m)  "
+            f"Slew {slew_1:.1f}°  Radius {r1/1000:.2f}m",
+            f"  Boom tip: ({T1[0]/1000:.2f}m, {T1[1]/1000:.2f}m)",
+            f"Crane 2: Position ({self.p2[0]/1000:.1f}m, {self.p2[1]/1000:.1f}m)  "
+            f"Slew {slew_2:.1f}°  Radius {r2/1000:.2f}m",
+            f"  Boom tip: ({T2[0]/1000:.2f}m, {T2[1]/1000:.2f}m)",
+            f"Boom tip distance: {dist/1000:.3f}m  (required: {required_dist/1000:.3f}m)",
         ]
         return "\n".join(lines)
 
@@ -241,7 +230,7 @@ class TandemGeometrySolver:
 # =============================================================================
 
 class TandemLiftOperation:
-    """Führt eine komplette Tandem-Lift-Operation mit zwei Kränen aus."""
+    """Executes a complete tandem lift operation with two cranes."""
 
     def __init__(self, crane_1_obj, crane_2_obj):
         self.crane_1    = crane_1_obj
@@ -276,27 +265,27 @@ class TandemLiftOperation:
         self.results['load_1'] = load_1
         self.results['load_2'] = load_2
         for w in warnings:
-            msgs.append(f"WARNUNG: {w}")
+            msgs.append(f"WARNING: {w}")
 
         r1_mm, ok1, wmsg1 = self.lift_1.calculate_optimal_radius(load_1)
         r2_mm, ok2, wmsg2 = self.lift_2.calculate_optimal_radius(load_2)
 
         if r1_mm == 0:
-            msgs.append(f"Kran 1 kann {load_1:.1f}t nicht tragen: {wmsg1}")
+            msgs.append(f"Crane 1 cannot carry {load_1:.1f}t: {wmsg1}")
             return self.results
         if r2_mm == 0:
-            msgs.append(f"Kran 2 kann {load_2:.1f}t nicht tragen: {wmsg2}")
+            msgs.append(f"Crane 2 cannot carry {load_2:.1f}t: {wmsg2}")
             return self.results
 
         self.results['radius_1'] = r1_mm
         self.results['radius_2'] = r2_mm
-        msgs.append(f"Kran 1: {load_1:.2f}t → Auslage {r1_mm/1000:.2f}m")
-        msgs.append(f"Kran 2: {load_2:.2f}t → Auslage {r2_mm/1000:.2f}m")
+        msgs.append(f"Crane 1: {load_1:.2f}t → radius {r1_mm/1000:.2f}m")
+        msgs.append(f"Crane 2: {load_2:.2f}t → radius {r2_mm/1000:.2f}m")
 
         if slew_1 is not None and slew_2 is not None:
             computed_slew_1 = slew_1
             computed_slew_2 = slew_2
-            msgs.append("Slew-Winkel: manuell vorgegeben")
+            msgs.append("Slew angles: manually specified")
         else:
             p1 = self._get_crane_xy(self.crane_1)
             p2 = self._get_crane_xy(self.crane_2)
@@ -307,7 +296,7 @@ class TandemLiftOperation:
 
             if solution is None:
                 msgs.append(
-                    "Geometrie-Löser: Keine Lösung gefunden!\n"
+                    "Geometry solver: no solution found!\n"
                     f"  r1={r1_mm/1000:.1f}m  r2={r2_mm/1000:.1f}m  D={l1_to_l2_m:.1f}m"
                 )
                 return self.results
@@ -322,43 +311,30 @@ class TandemLiftOperation:
         success_2, msg_2, _ = self.lift_2.execute_lift(load_2, computed_slew_2)
 
         if not success_1:
-            msgs.append(f"Kran 1 Positionierung fehlgeschlagen: {msg_1}")
+            msgs.append(f"Crane 1 positioning failed: {msg_1}")
             return self.results
         if not success_2:
-            msgs.append(f"Kran 2 Positionierung fehlgeschlagen: {msg_2}")
+            msgs.append(f"Crane 2 positioning failed: {msg_2}")
             return self.results
 
         self.results['success'] = True
-        msgs.append("✓ Tandem-Lift erfolgreich konfiguriert")
+        msgs.append("✓ Tandem lift successfully configured")
         return self.results
 
-    # NEU: Vollständige Stabilitätskette mit LoadCondition + Hydrostatik
-    def transfer_to_loadcondition(self, doc=None, auto_calculate=True, 
+    def transfer_to_loadcondition(self, doc=None, auto_calculate=True,
                                    show_confirmation=True):
-        """
-        Überträgt Tandem-Daten und führt komplette Stabilitätskette aus.
-        
-        REIHENFOLGE:
-        1. Kran-Daten → LoadCondition
-        2. LoadCondition Recalculation (Summen/COG/FSM)  
-        3. Hydrostatische Berechnung (ShipSinkAndTrim)
-        
-        Returns: (success: bool, message: str, hydro_results: dict)
-        """
         if doc is None:
             doc = App.activeDocument()
             if doc is None:
-                return False, "Kein aktives Dokument!", None
-        
-        # Kran-Daten sammeln
+                return False, "No active document!", None
+
         crane_data = {}
-        
-        # Kran 1 Daten
+
         if self.results['radius_1'] > 0 and self.crane_1:
             boom_1, hook_1 = get_crane_positions(self.crane_1)
             label_1 = self.crane_1.Label
             boom_kg_1 = float(getattr(self.crane_1, 'BoomWeight', 0.0)) * 1000.0
-            
+
             crane_data[label_1] = {
                 'boom_kg':  boom_kg_1,
                 'hook_kg':  self.results['load_1'] * 1000.0,
@@ -367,14 +343,13 @@ class TandemLiftOperation:
             }
             App.Console.PrintMessage(
                 f"  {label_1}: Boom={boom_kg_1:.0f}kg "
-                f"Haken={self.results['load_1']*1000:.0f}kg\n")
-        
-        # Kran 2 Daten  
+                f"Hook={self.results['load_1']*1000:.0f}kg\n")
+
         if self.results['radius_2'] > 0 and self.crane_2:
             boom_2, hook_2 = get_crane_positions(self.crane_2)
             label_2 = self.crane_2.Label
             boom_kg_2 = float(getattr(self.crane_2, 'BoomWeight', 0.0)) * 1000.0
-            
+
             crane_data[label_2] = {
                 'boom_kg':  boom_kg_2,
                 'hook_kg':  self.results['load_2'] * 1000.0,
@@ -383,31 +358,27 @@ class TandemLiftOperation:
             }
             App.Console.PrintMessage(
                 f"  {label_2}: Boom={boom_kg_2:.0f}kg "
-                f"Haken={self.results['load_2']*1000:.0f}kg\n")
-        
+                f"Hook={self.results['load_2']*1000:.0f}kg\n")
+
         if not crane_data:
-            return False, "Keine gültigen Kran-Daten vorhanden (Radien = 0)!", None
-        
-        # KOMPLETTE KETTE über CraneSpreadsheetTools
-        # Schritt 1: Kran-Daten schreiben
-        # Schritt 2: LoadCondition Recalculation  
-        # Schritt 3: Hydrostatische Berechnung
+            return False, "No valid crane data available (radii = 0)!", None
+
         success, msg, hydro = transfer_crane_data_and_calculate(
             crane_data,
             doc=doc,
             auto_calculate=auto_calculate,
             show_confirmation=show_confirmation
         )
-        
+
         return success, msg, hydro
 
 
 # =============================================================================
-# 3D VISUALISIERUNG
+# 3D VISUALISATION
 # =============================================================================
 
 class LoadVisual:
-    """Erstellt und verwaltet die 3D-Visualisierung der Last."""
+    """Creates and manages the 3D visualisation of the load."""
 
     def __init__(self, doc, load_geom, name="SwingLoad"):
         self.doc = doc
@@ -520,7 +491,7 @@ class LoadVisual:
 
 
 class SwingCirclesVisual:
-    """Zeichnet die Drehkreise der Kräne in einer bestimmten Höhe."""
+    """Draws the slew circles of the cranes at a given height."""
 
     def __init__(self, doc, crane_obj, name_suffix):
         self.doc = doc
@@ -565,12 +536,12 @@ class SwingCirclesVisual:
 
 
 # =============================================================================
-# INTERAKTIVE SIMULATION
+# INTERACTIVE SIMULATION
 # =============================================================================
 
 class SwingStep:
-    """Status eines einzelnen Simulationsschritts."""
-    STATUS_OK = "OK"
+    """State of a single simulation step."""
+    STATUS_OK   = "OK"
     STATUS_WARN = "WARN"
     STATUS_FAIL = "FAIL"
 
@@ -610,7 +581,7 @@ class SwingStep:
 
 
 class InteractiveSwingSimulator:
-    """Schritt-für-Schritt Simulator mit visuellem Feedback."""
+    """Step-by-step simulator with visual feedback."""
 
     def __init__(self, crane_1_obj, crane_2_obj, load_geom, ship_geom):
         self.crane_1 = crane_1_obj
@@ -664,7 +635,6 @@ class InteractiveSwingSimulator:
         return self.r1_mm > 0 and self.r2_mm > 0
 
     def _get_min_radius(self, crane_obj):
-        """Liest den physikalischen Mindest-Auslageradius."""
         try:
             if crane_obj.UseLoadStages:
                 return min(
@@ -678,7 +648,6 @@ class InteractiveSwingSimulator:
             return float(crane_obj.BoomLength) * 0.20
 
     def _crane_axes(self):
-        """Gibt Kranpositionen und Schiffsachsen zurück."""
         p1 = (float(self.crane_1.Placement.Base.x),
               float(self.crane_1.Placement.Base.y))
         p2 = (float(self.crane_2.Placement.Base.x),
@@ -695,7 +664,6 @@ class InteractiveSwingSimulator:
         return p1, p2, u_long, v_land
 
     def _slew_for_lp(self, crane_pos, lp_xy):
-        """Slew-Winkel und tatsächlicher Abstand Kran→LP."""
         dx = crane_pos[0] - lp_xy[0]
         dy = lp_xy[1] - crane_pos[1]
         slew = math.degrees(math.atan2(dx, dy)) % 360
@@ -704,20 +672,11 @@ class InteractiveSwingSimulator:
         return slew, dist
 
     def _calculate_heights(self):
-        """
-        Höhenberechnung basierend auf Deck.
-        Ziel: Unterkante Last max 1m über Deck.
-        """
         deck_z = self.ship_geom.deck_z
-        
-        # Ziel: Unterkante Last 1000mm über Deck
         load_bottom_z = deck_z + 1000.0
-        
-        # Liftpunkt-Höhe = Unterkante + Höhe - Offset von Oberkante
         lp_offset_from_top = self.load_geom.lp_height_from_top_mm
         lp_z = load_bottom_z + self.load_geom.height_mm - lp_offset_from_top
-        
-        # Boom-Spitzen-Höhe für Sling-Linien-Visualisierung
+
         def boom_tip_z(crane_obj):
             cz = float(crane_obj.Placement.Base.z)
             bh = float(crane_obj.BaseHeight)
@@ -725,25 +684,18 @@ class InteractiveSwingSimulator:
             bl = float(crane_obj.BoomLength)
             luff = float(crane_obj.LuffingAngle)
             return cz + bh + ph + bl * math.sin(math.radians(luff))
-        
+
         tip_z = max(boom_tip_z(self.crane_1), boom_tip_z(self.crane_2))
-        
+
         App.Console.PrintMessage(
             f"  Deck: {deck_z/1000:.2f}m  "
-            f"Last-Unterkante: {load_bottom_z/1000:.2f}m  "
-            f"LP-Höhe: {lp_z/1000:.2f}m\n"
+            f"Load bottom: {load_bottom_z/1000:.2f}m  "
+            f"LP height: {lp_z/1000:.2f}m\n"
         )
-        
+
         return lp_z, load_bottom_z, tip_z
 
     def find_valid_for_angle(self, theta_deg, n_angles=720):
-        """
-        Für einen Rotationswinkel θ der Last:
-        Suche alle (LP1, LP2) Paare so dass:
-          - LP2 = LP1 + D × (cos θ_world, sin θ_world)
-          - LP1 im Ring [r1_min … r1_max] um Kran 1
-          - LP2 im Ring [r2_min … r2_max] um Kran 2
-        """
         p1, p2, u_long, v_land = self._crane_axes()
         D_mm = self.load_geom.lp_distance_mm
 
@@ -773,13 +725,9 @@ class InteractiveSwingSimulator:
         return candidates
 
     def generate_steps(self, sea_dir_deg, land_dir_deg, n_steps):
-        """
-        Rotations-basierte Schwingsequenz mit Deck-basierter Höhe.
-        """
         self.steps = []
         p1, p2, u_long, v_land = self._crane_axes()
 
-        # Höhen aus Deck berechnen
         lp_z, load_bottom_z, tip_z = self._calculate_heights()
 
         half = n_steps // 2
@@ -811,13 +759,13 @@ class InteractiveSwingSimulator:
 
         seq = steps_for_rotation(+1)
         self.swing_direction = +1
-        self.swing_mode = 'LP1-zuerst'
+        self.swing_mode = 'LP1-first'
         if seq is None:
             seq = steps_for_rotation(-1)
             self.swing_direction = -1
-            self.swing_mode = 'LP2-zuerst'
+            self.swing_mode = 'LP2-first'
         if seq is None:
-            self.swing_mode = 'keine_loesung'
+            self.swing_mode = 'no_solution'
             return self.steps
 
         for i, entry in enumerate(seq):
@@ -838,29 +786,28 @@ class InteractiveSwingSimulator:
             step.slew_1 = slew_1
             step.slew_2 = slew_2
 
-            step.load_corners = self.load_geom.get_corners_3d(lp1, lp2, load_bottom_z)
+            step.load_corners  = self.load_geom.get_corners_3d(lp1, lp2, load_bottom_z)
             step.load_footprint = self.load_geom.get_footprint_2d(lp1, lp2, load_bottom_z)
-            step.load_cog_xy = self.load_geom.get_cog_xy(lp1, lp2)
+            step.load_cog_xy   = self.load_geom.get_cog_xy(lp1, lp2)
 
-            phase_name = "Phase1-Ausdrehen" if i < half else "Phase2-Eindrehen"
+            phase_name = "Phase1-SwingOut" if i < half else "Phase2-SwingIn"
             step.messages.append(f"{phase_name}  θ={theta:.1f}°")
 
-            # Kollisionsprüfung
             hull_cl = self.ship_geom.clearance_corners_2d(step.load_footprint)
             deck_cl = self.ship_geom.z_clearance_below(load_bottom_z)
             step.clearance_ship_hull = hull_cl
-            step.clearance_deck = deck_cl
+            step.clearance_deck      = deck_cl
 
             if hull_cl < 0:
-                step.set_fail(f"Kollision Rumpf ({-hull_cl/1000:.2f}m)")
+                step.set_fail(f"Hull collision ({-hull_cl/1000:.2f}m)")
             elif deck_cl < 0:
-                step.set_fail(f"Kollision Deck ({-deck_cl/1000:.2f}m)")
+                step.set_fail(f"Deck collision ({-deck_cl/1000:.2f}m)")
             elif hull_cl < 1000:
-                step.set_warn(f"Rumpfabstand kritisch: {hull_cl/1000:.2f}m")
+                step.set_warn(f"Hull clearance critical: {hull_cl/1000:.2f}m")
             elif hull_cl < 3000:
-                step.set_warn(f"Rumpfabstand gering: {hull_cl/1000:.2f}m")
+                step.set_warn(f"Hull clearance low: {hull_cl/1000:.2f}m")
             else:
-                step.set_ok(f"Rumpf {hull_cl/1000:.2f}m  Deck {deck_cl/1000:.2f}m")
+                step.set_ok(f"Hull {hull_cl/1000:.2f}m  Deck {deck_cl/1000:.2f}m")
 
             self.steps.append(step)
 
@@ -933,7 +880,7 @@ class InteractiveSwingDialog(QtGui.QDialog):
 
     def __init__(self, parent=None):
         super(InteractiveSwingDialog, self).__init__(parent)
-        self.setWindowTitle("Schwingsimulation")
+        self.setWindowTitle("Swing Simulation")
         self.setFixedWidth(380)
         self.setWindowFlags(
             QtCore.Qt.Tool |
@@ -949,7 +896,6 @@ class InteractiveSwingDialog(QtGui.QDialog):
         self.findCranes()
 
     def setupUI(self):
-        # ── Scroll-Container ──────────────────────────────────────────────────
         scroll = QtGui.QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
@@ -966,8 +912,8 @@ class InteractiveSwingDialog(QtGui.QDialog):
 
         self.crane_1_combo = QtGui.QComboBox()
         self.crane_2_combo = QtGui.QComboBox()
-        setup_layout.addRow("Kran 1 (Heck):", self.crane_1_combo)
-        setup_layout.addRow("Kran 2 (Bug):", self.crane_2_combo)
+        setup_layout.addRow("Crane 1 (Aft):", self.crane_1_combo)
+        setup_layout.addRow("Crane 2 (Fwd):", self.crane_2_combo)
 
         def dspin(lo, hi, val, sfx, dec=0):
             w = QtGui.QDoubleSpinBox()
@@ -985,21 +931,19 @@ class InteractiveSwingDialog(QtGui.QDialog):
         self.e_cog_lp1 = dspin(0,    99000,  10000, " mm")
         self.e_lp1_end = dspin(0,    50000,   2000, " mm")
 
-        setup_layout.addRow("Last Länge:",    self.e_length)
-        setup_layout.addRow("Last Breite:",   self.e_width)
-        setup_layout.addRow("Last Höhe:",     self.e_height)
-        setup_layout.addRow("Gewicht:",       self.e_weight)
-        setup_layout.addRow("Abstand LP1→LP2:", self.e_lp_dist)
-        setup_layout.addRow("COG → LP1:",     self.e_cog_lp1)
-        setup_layout.addRow("LP1 vom Ende:",  self.e_lp1_end)
+        setup_layout.addRow("Load length:",      self.e_length)
+        setup_layout.addRow("Load width:",       self.e_width)
+        setup_layout.addRow("Load height:",      self.e_height)
+        setup_layout.addRow("Weight:",           self.e_weight)
+        setup_layout.addRow("Distance LP1→LP2:", self.e_lp_dist)
+        setup_layout.addRow("COG to LP1:",       self.e_cog_lp1)
+        setup_layout.addRow("LP1 from end:",     self.e_lp1_end)
 
-        # Deckshöhe
         self.e_deck_z = dspin(-50000, 50000, 0, " mm")
         self.e_deck_z.setToolTip(
-            "Z-Koordinate des Decks (0 = Nullniveau, positive Werte = über Null)")
-        setup_layout.addRow("Deck Höhe (Z):", self.e_deck_z)
+            "Z coordinate of deck (0 = datum, positive = above datum)")
+        setup_layout.addRow("Deck height (Z):", self.e_deck_z)
 
-        # Live-Vorschau Lastverteilung
         self.lbl_dist_preview = QtGui.QLabel("")
         self.lbl_dist_preview.setStyleSheet(
             "color: #333; font-size: 10px; padding: 2px;")
@@ -1014,11 +958,11 @@ class InteractiveSwingDialog(QtGui.QDialog):
         self.e_steps.setRange(5, 50)
         self.e_steps.setValue(15)
 
-        setup_layout.addRow("See-Richtung:",   self.e_sea_dir)
-        setup_layout.addRow("Land-Richtung:",  self.e_land_dir)
-        setup_layout.addRow("Anzahl Schritte:", self.e_steps)
+        setup_layout.addRow("Sea direction:",    self.e_sea_dir)
+        setup_layout.addRow("Land direction:",   self.e_land_dir)
+        setup_layout.addRow("Number of steps:",  self.e_steps)
 
-        self.init_btn = QtGui.QPushButton("Simulation initialisieren")
+        self.init_btn = QtGui.QPushButton("Initialize simulation")
         self.init_btn.setStyleSheet(
             "background-color: #4CAF50; color: white; font-weight: bold;")
         self.init_btn.clicked.connect(self.initializeSimulation)
@@ -1027,18 +971,18 @@ class InteractiveSwingDialog(QtGui.QDialog):
         setup_group.setLayout(setup_layout)
         layout.addWidget(setup_group)
 
-        # ---- Steuerung ----
-        control_group = QtGui.QGroupBox("Schritt-für-Schritt Steuerung")
+        # ---- Step control ----
+        control_group = QtGui.QGroupBox("Step-by-Step Control")
 
-        self.btn_prev = QtGui.QPushButton("◀ Vorheriger")
+        self.btn_prev = QtGui.QPushButton("◀ Previous")
         self.btn_prev.setEnabled(False)
         self.btn_prev.clicked.connect(self.prevStep)
 
-        self.lbl_step = QtGui.QLabel("Schritt: - / -")
+        self.lbl_step = QtGui.QLabel("Step: - / -")
         self.lbl_step.setAlignment(QtCore.Qt.AlignCenter)
         self.lbl_step.setStyleSheet("font-size: 14px; font-weight: bold;")
 
-        self.btn_next = QtGui.QPushButton("Nächster ▶")
+        self.btn_next = QtGui.QPushButton("Next ▶")
         self.btn_next.setEnabled(False)
         self.btn_next.setStyleSheet("background-color: #2196F3; color: white;")
         self.btn_next.clicked.connect(self.nextStep)
@@ -1048,7 +992,7 @@ class InteractiveSwingDialog(QtGui.QDialog):
         ctrl_row.addWidget(self.lbl_step, 1)
         ctrl_row.addWidget(self.btn_next)
 
-        self.lbl_status = QtGui.QLabel("Status: Nicht initialisiert")
+        self.lbl_status = QtGui.QLabel("Status: Not initialised")
         self.lbl_status.setAlignment(QtCore.Qt.AlignCenter)
         self.lbl_status.setStyleSheet("padding: 5px; border-radius: 3px;")
 
@@ -1058,28 +1002,28 @@ class InteractiveSwingDialog(QtGui.QDialog):
         control_group.setLayout(ctrl_vbox)
         layout.addWidget(control_group)
 
-        # ---- Was-wäre-wenn ----
-        whatif_group = QtGui.QGroupBox("Was-wäre-wenn Anpassungen")
+        # ---- What-if ----
+        whatif_group = QtGui.QGroupBox("What-If Adjustments")
         whatif_layout = QtGui.QFormLayout()
 
         self.e_list_angle = dspin(-5, 5, 0, " °", 1)
-        self.e_list_angle.setToolTip("Schlagseite positiv = Backbord höher")
+        self.e_list_angle.setToolTip("List angle: positive = port side higher")
 
-        self.btn_apply_list = QtGui.QPushButton("Schlagseite anwenden")
+        self.btn_apply_list = QtGui.QPushButton("Apply list")
         self.btn_apply_list.setEnabled(False)
         self.btn_apply_list.clicked.connect(self.applyListAngle)
 
         list_row = QtGui.QHBoxLayout()
         list_row.addWidget(self.e_list_angle)
         list_row.addWidget(self.btn_apply_list)
-        whatif_layout.addRow("Schlagseite:", list_row)
+        whatif_layout.addRow("List angle:", list_row)
 
         self.e_lp1_shift = dspin(-5000, 5000, 0, " mm")
         self.e_lp2_shift = dspin(-5000, 5000, 0, " mm")
-        whatif_layout.addRow("LP1 Verschiebung:", self.e_lp1_shift)
-        whatif_layout.addRow("LP2 Verschiebung:", self.e_lp2_shift)
+        whatif_layout.addRow("LP1 shift:", self.e_lp1_shift)
+        whatif_layout.addRow("LP2 shift:", self.e_lp2_shift)
 
-        self.btn_test_lp = QtGui.QPushButton("Alternative LP testen")
+        self.btn_test_lp = QtGui.QPushButton("Test alternative LP")
         self.btn_test_lp.setEnabled(False)
         self.btn_test_lp.clicked.connect(self.testAlternativeLP)
         whatif_layout.addRow("", self.btn_test_lp)
@@ -1087,11 +1031,11 @@ class InteractiveSwingDialog(QtGui.QDialog):
         whatif_group.setLayout(whatif_layout)
         layout.addWidget(whatif_group)
 
-        # NEU: LoadCondition Export mit kompletter Stabilitätskette
-        transfer_group = QtGui.QGroupBox("LoadCondition Export + Stabilität")
+        # ---- LoadCondition export ----
+        transfer_group = QtGui.QGroupBox("LoadCondition Export + Stability")
         transfer_layout = QtGui.QVBoxLayout()
 
-        self.btn_transfer_lc = QtGui.QPushButton("📊 Transfer & Stabilitätsberechnung")
+        self.btn_transfer_lc = QtGui.QPushButton("📊 Transfer & Stability Calculation")
         self.btn_transfer_lc.setStyleSheet(
             "QPushButton{background:#2d6a4f;color:white;font-weight:bold;"
             "padding:8px;border-radius:4px;font-size:11px;}"
@@ -1100,14 +1044,14 @@ class InteractiveSwingDialog(QtGui.QDialog):
         )
         self.btn_transfer_lc.setEnabled(False)
         self.btn_transfer_lc.setToolTip(
-            "1. Schreibt Kran-Daten ins LoadCondition\n"
-            "2. Führt LoadCondition-Recalculation durch\n"
-            "3. Berechnet Hydrostatik (ShipSinkAndTrim)\n"
-            "Zeigt alle Ergebnisse in einem Dialog an.")
+            "1. Writes crane data to LoadCondition\n"
+            "2. Runs LoadCondition recalculation\n"
+            "3. Calculates hydrostatics (ShipSinkAndTrim)\n"
+            "Shows all results in a dialog.")
         self.btn_transfer_lc.clicked.connect(self.transferToLoadCondition)
         transfer_layout.addWidget(self.btn_transfer_lc)
 
-        self.lbl_transfer_status = QtGui.QLabel("Noch nicht übertragen")
+        self.lbl_transfer_status = QtGui.QLabel("Not yet transferred")
         self.lbl_transfer_status.setAlignment(QtCore.Qt.AlignCenter)
         self.lbl_transfer_status.setStyleSheet("color: #666; font-size: 10px;")
         transfer_layout.addWidget(self.lbl_transfer_status)
@@ -1115,8 +1059,8 @@ class InteractiveSwingDialog(QtGui.QDialog):
         transfer_group.setLayout(transfer_layout)
         layout.addWidget(transfer_group)
 
-        # ---- Info ----
-        info_group = QtGui.QGroupBox("Kollisions-Info")
+        # ---- Collision info ----
+        info_group = QtGui.QGroupBox("Collision Info")
         info_layout = QtGui.QVBoxLayout()
         self.info_text = QtGui.QTextEdit()
         self.info_text.setReadOnly(True)
@@ -1126,28 +1070,27 @@ class InteractiveSwingDialog(QtGui.QDialog):
         info_group.setLayout(info_layout)
         layout.addWidget(info_group)
 
-        # ---- Buttons (außerhalb Scroll, immer sichtbar) ----
+        # ---- Persistent buttons ----
         btn_layout = QtGui.QHBoxLayout()
-        self.btn_cleanup = QtGui.QPushButton("Visualisierung löschen")
+        self.btn_cleanup = QtGui.QPushButton("Clear visualisation")
         self.btn_cleanup.clicked.connect(self.cleanup)
-        self.btn_close = QtGui.QPushButton("Schließen")
+        self.btn_close = QtGui.QPushButton("Close")
         self.btn_close.clicked.connect(self.close)
         btn_layout.addWidget(self.btn_cleanup)
         btn_layout.addStretch()
         btn_layout.addWidget(self.btn_close)
 
-        # ── Alles zusammenbauen ───────────────────────────────────────────────
-        layout.addStretch()                  # drückt Inhalt nach oben
+        layout.addStretch()
         scroll.setWidget(container)
 
         outer = QtGui.QVBoxLayout(self)
         outer.setContentsMargins(4, 4, 4, 4)
-        outer.addWidget(scroll)              # scrollbarer Bereich
-        outer.addLayout(btn_layout)          # Buttons immer unten sichtbar
+        outer.addWidget(scroll)
+        outer.addLayout(btn_layout)
         self.setLayout(outer)
 
         self.setMinimumWidth(360)
-        self.resize(380, 720)                # Startgröße erhöht für neue Gruppe
+        self.resize(380, 720)
 
     def findCranes(self):
         doc = App.activeDocument()
@@ -1159,7 +1102,7 @@ class InteractiveSwingDialog(QtGui.QDialog):
 
         for combo in (self.crane_1_combo, self.crane_2_combo):
             combo.clear()
-            combo.addItem("── wählen ──", None)
+            combo.addItem("── select ──", None)
             for c in cranes:
                 pos = c.Placement.Base
                 combo.addItem(
@@ -1179,11 +1122,11 @@ class InteractiveSwingDialog(QtGui.QDialog):
                 return
             d2 = d - c
             if d2 <= 0 or c < 0:
-                self.lbl_dist_preview.setText("⚠ COG außerhalb LP-Bereich")
+                self.lbl_dist_preview.setText("⚠ COG outside LP range")
                 return
             f1 = w * d2 / d
             f2 = w * c / d
-            self.lbl_dist_preview.setText(f"→ Kran1: {f1:.1f} t   Kran2: {f2:.1f} t")
+            self.lbl_dist_preview.setText(f"→ Crane 1: {f1:.1f} t   Crane 2: {f2:.1f} t")
         except Exception:
             pass
 
@@ -1192,20 +1135,18 @@ class InteractiveSwingDialog(QtGui.QDialog):
         c2 = self.crane_2_combo.currentData()
 
         if not c1 or not c2 or c1 is c2:
-            QtGui.QMessageBox.warning(self, "Fehler", "Bitte zwei verschiedene Kräne wählen!")
+            QtGui.QMessageBox.warning(self, "Error", "Please select two different cranes!")
             return
 
         cog_lp1_mm = self.e_cog_lp1.value()
         lp_dist_mm = self.e_lp_dist.value()
 
         if cog_lp1_mm >= lp_dist_mm:
-            QtGui.QMessageBox.warning(self, "Eingabefehler",
-                f"COG→LP1 ({cog_lp1_mm:.0f} mm) muss kleiner als "
-                f"LP1→LP2 ({lp_dist_mm:.0f} mm) sein!")
+            QtGui.QMessageBox.warning(self, "Input error",
+                f"COG to LP1 ({cog_lp1_mm:.0f} mm) must be less than "
+                f"LP1 to LP2 ({lp_dist_mm:.0f} mm)!")
             return
 
-        # Lokale Klassen für LoadGeometry und ShipGeometry definieren
-        # um zirkuläre Importe zu vermeiden
         class LocalLoadGeometry:
             def __init__(self, length_mm, width_mm, height_mm,
                          lp1_from_aft_mm, lp_distance_mm, cog_from_lp1_mm,
@@ -1217,7 +1158,7 @@ class InteractiveSwingDialog(QtGui.QDialog):
                 self.lp_distance_mm = lp_distance_mm
                 self.cog_from_lp1_mm = cog_from_lp1_mm
                 self.rigging_length_mm = rigging_length_mm
-                self.lp_height_from_top_mm = 0  # Default
+                self.lp_height_from_top_mm = 0
 
             def get_world_transform(self, lp1_xy, lp2_xy, bot_z):
                 dx = lp2_xy[0] - lp1_xy[0]
@@ -1297,7 +1238,6 @@ class InteractiveSwingDialog(QtGui.QDialog):
             rigging_length_mm=8000,
         )
 
-        # NEU: Manuelle Deckshöhe übergeben
         ship = LocalShipGeometry(
             length_mm=120000,
             width_mm=22000,
@@ -1313,17 +1253,16 @@ class InteractiveSwingDialog(QtGui.QDialog):
         )
 
         if not ok:
-            QtGui.QMessageBox.critical(self, "Fehler", "Kapazitätsgrenze überschritten!")
+            QtGui.QMessageBox.critical(self, "Error", "Capacity limit exceeded!")
             return
 
         self.simulator.setup_visualization()
-
         self.simulator.steps = self._generate_dummy_steps(c1, c2)
 
         if len(self.simulator.steps) == 0:
-            QtGui.QMessageBox.warning(self, "Fehler",
-                "Keine Lösung gefunden!\n"
-                "Prüfe ob Auslagen (r1, r2) und LP-Abstand geometrisch erreichbar sind.")
+            QtGui.QMessageBox.warning(self, "Error",
+                "No solution found!\n"
+                "Check whether radii (r1, r2) and LP distance are geometrically reachable.")
             return
 
         mode = getattr(self.simulator, 'swing_mode', '?')
@@ -1332,19 +1271,19 @@ class InteractiveSwingDialog(QtGui.QDialog):
         f1 = getattr(self.simulator, 'load_1_t', 0)
         f2 = getattr(self.simulator, 'load_2_t', 0)
         mode_tx = {
-            'LP1-zuerst': 'LP1 (leichter Kran) zuerst ausgeschwungen',
-            'LP2-zuerst': 'LP2 (schwerer Kran) zuerst ausgeschwungen',
-            'keine_loesung': '⚠ Keine Lösung gefunden!',
+            'LP1-first':   'LP1 (lighter crane) swung out first',
+            'LP2-first':   'LP2 (heavier crane) swung out first',
+            'no_solution': '⚠ No solution found!',
         }.get(mode, mode)
         summary = [
-            "═══ Lastverteilung ═══",
-            f"Kran 1:  {f1:.1f} t   →   Auslage {r1:.2f} m",
-            f"Kran 2:  {f2:.1f} t   →   Auslage {r2:.2f} m",
+            "═══ Load distribution ═══",
+            f"Crane 1:  {f1:.1f} t   →   radius {r1:.2f} m",
+            f"Crane 2:  {f2:.1f} t   →   radius {r2:.2f} m",
             "",
-            "═══ Lademodus ═══",
+            "═══ Lift mode ═══",
             mode_tx,
             "",
-            f"Schritte gesamt: {len(self.simulator.steps)}",
+            f"Total steps: {len(self.simulator.steps)}",
         ]
         for w in getattr(self.simulator, 'dist_warnings', []):
             summary.append(f"⚠ {w}")
@@ -1357,9 +1296,8 @@ class InteractiveSwingDialog(QtGui.QDialog):
         self.btn_prev.setEnabled(True)
         self.btn_apply_list.setEnabled(True)
         self.btn_test_lp.setEnabled(True)
-        # NEU: Transfer-Button aktivieren
         self.btn_transfer_lc.setEnabled(True)
-        self.lbl_transfer_status.setText("Bereit zum Übertragen")
+        self.lbl_transfer_status.setText("Ready to transfer")
         self.lbl_transfer_status.setStyleSheet("color: #2196F3;")
 
     def _generate_dummy_steps(self, c1, c2):
@@ -1379,36 +1317,36 @@ class InteractiveSwingDialog(QtGui.QDialog):
         self.simulator.show_step(self.current_step_idx)
 
         self.lbl_step.setText(
-            f"Schritt: {self.current_step_idx + 1} / {len(self.simulator.steps)}"
+            f"Step: {self.current_step_idx + 1} / {len(self.simulator.steps)}"
         )
 
         colors = {
-            SwingStep.STATUS_OK: ("#c8f7c5", "Kollisionsfrei"),
-            SwingStep.STATUS_WARN: ("#fff3cd", "Warnung: Geringe Abstände"),
-            SwingStep.STATUS_FAIL: ("#f8d7da", "KOLLISION!"),
+            SwingStep.STATUS_OK:   ("#c8f7c5", "Clear"),
+            SwingStep.STATUS_WARN: ("#fff3cd", "Warning: low clearances"),
+            SwingStep.STATUS_FAIL: ("#f8d7da", "COLLISION!"),
         }
-        bg, text = colors.get(step.status, ("#e2e3e5", "Unbekannt"))
+        bg, text = colors.get(step.status, ("#e2e3e5", "Unknown"))
         self.lbl_status.setStyleSheet(f"background-color: {bg}; padding: 5px;")
         self.lbl_status.setText(f"Status: {text}")
 
-        f1 = getattr(self.simulator, 'load_1_t', 0)
-        f2 = getattr(self.simulator, 'load_2_t', 0)
+        f1   = getattr(self.simulator, 'load_1_t', 0)
+        f2   = getattr(self.simulator, 'load_2_t', 0)
         mode = getattr(self.simulator, 'swing_mode', '')
-        r1 = (step.radius_1_mm or 0) / 1000
-        r2 = (step.radius_2_mm or 0) / 1000
+        r1   = (step.radius_1_mm or 0) / 1000
+        r2   = (step.radius_2_mm or 0) / 1000
         info = [
-            f"Schritt {self.current_step_idx + 1} / {len(self.simulator.steps)}"
+            f"Step {self.current_step_idx + 1} / {len(self.simulator.steps)}"
             f"   [{mode}]",
             "",
-            f"Lastverteilung:",
-            f"  Kran 1:  {f1:.1f} t   Slew {step.slew_1:.1f}°   r = {r1:.2f} m",
-            f"  Kran 2:  {f2:.1f} t   Slew {step.slew_2:.1f}°   r = {r2:.2f} m",
+            "Load distribution:",
+            f"  Crane 1:  {f1:.1f} t   Slew {step.slew_1:.1f}°   r = {r1:.2f} m",
+            f"  Crane 2:  {f2:.1f} t   Slew {step.slew_2:.1f}°   r = {r2:.2f} m",
             "",
         ]
         if step.clearance_ship_hull is not None:
-            info.append(f"Rumpf-Abstand:  {step.clearance_ship_hull/1000:.2f} m")
+            info.append(f"Hull clearance:  {step.clearance_ship_hull/1000:.2f} m")
         if step.clearance_deck is not None:
-            info.append(f"Deck-Abstand:   {step.clearance_deck/1000:.2f} m")
+            info.append(f"Deck clearance:  {step.clearance_deck/1000:.2f} m")
         for msg in step.messages:
             info.append(msg)
         self.info_text.setText("\n".join(info))
@@ -1439,60 +1377,49 @@ class InteractiveSwingDialog(QtGui.QDialog):
     def testAlternativeLP(self):
         pass
 
-    # NEU: Transfer mit kompletter Stabilitätskette
     def transferToLoadCondition(self):
-        """
-        Transferiert Tandem-Daten und führt komplette Stabilitätskette aus.
-        Reihenfolge: 1. Kran-Daten → 2. LoadCondition Recalc → 3. Hydrostatik
-        """
         if not self.simulator:
-            QtGui.QMessageBox.warning(self, "Fehler", 
-                "Simulation nicht initialisiert!")
+            QtGui.QMessageBox.warning(self, "Error",
+                "Simulation not initialised!")
             return
-        
+
         c1 = self.crane_1_combo.currentData()
         c2 = self.crane_2_combo.currentData()
-        
+
         if not c1 or not c2:
-            QtGui.QMessageBox.warning(self, "Fehler", "Kräne nicht gefunden!")
+            QtGui.QMessageBox.warning(self, "Error", "Cranes not found!")
             return
-        
-        # TandemLiftOperation mit aktuellen Werten erstellen
+
         op = TandemLiftOperation(c1, c2)
-        
-        # Aktuelle Lastverteilung und Radien aus dem Simulator übernehmen
-        op.results['load_1'] = getattr(self.simulator, 'load_1_t', 0)
-        op.results['load_2'] = getattr(self.simulator, 'load_2_t', 0)
+        op.results['load_1']   = getattr(self.simulator, 'load_1_t', 0)
+        op.results['load_2']   = getattr(self.simulator, 'load_2_t', 0)
         op.results['radius_1'] = self.simulator.r1_mm
         op.results['radius_2'] = self.simulator.r2_mm
-        
-        # KOMPLETTE KETTE ausführen (mit Bestätigungsdialog)
+
         success, msg, hydro = op.transfer_to_loadcondition(
             auto_calculate=True,
             show_confirmation=True
         )
-        
+
         if success:
-            self.lbl_transfer_status.setText("✓ Übertragen & Berechnet")
+            self.lbl_transfer_status.setText("✓ Transferred & calculated")
             self.lbl_transfer_status.setStyleSheet("color: #4CAF50; font-weight: bold;")
-            # Erfolg wird bereits im transfer_crane_data_and_calculate Dialog angezeigt
         else:
-            self.lbl_transfer_status.setText("✗ Fehler")
+            self.lbl_transfer_status.setText("✗ Error")
             self.lbl_transfer_status.setStyleSheet("color: #f44336; font-weight: bold;")
-            QtGui.QMessageBox.critical(self, "Fehler", msg)
+            QtGui.QMessageBox.critical(self, "Error", msg)
 
     def cleanup(self):
         if self.simulator:
             self.simulator.cleanup()
             self.simulator = None
-        self.lbl_step.setText("Schritt: - / -")
-        self.lbl_status.setText("Status: Nicht initialisiert")
+        self.lbl_step.setText("Step: - / -")
+        self.lbl_status.setText("Status: Not initialised")
         self.lbl_status.setStyleSheet("padding: 5px;")
         self.btn_next.setEnabled(False)
         self.btn_prev.setEnabled(False)
-        # NEU: Transfer-Button zurücksetzen
         self.btn_transfer_lc.setEnabled(False)
-        self.lbl_transfer_status.setText("Noch nicht übertragen")
+        self.lbl_transfer_status.setText("Not yet transferred")
         self.lbl_transfer_status.setStyleSheet("color: #666; font-size: 10px;")
 
     def closeEvent(self, event):
@@ -1501,11 +1428,11 @@ class InteractiveSwingDialog(QtGui.QDialog):
 
 
 # =============================================================================
-# EXTERNER AUFRUF
+# EXTERNAL ACCESS
 # =============================================================================
 
 def show_tandem_lift_dialog():
-    """Zeigt den interaktiven Schwing-Dialog an."""
+    """Show the interactive swing dialog."""
     dialog = InteractiveSwingDialog(Gui.getMainWindow())
     dialog.exec_()
 
@@ -1514,7 +1441,7 @@ def create_tandem_lift(crane_1, crane_2, total_weight_t,
                        cog_to_l1_m, l1_to_l2_m,
                        land_direction_deg=180.0,
                        slew_1=None, slew_2=None):
-    """Programmatische Tandem-Lift-Operation."""
+    """Programmatic tandem lift operation."""
     op = TandemLiftOperation(crane_1, crane_2)
     return op.execute(total_weight_t, cog_to_l1_m, l1_to_l2_m,
                       land_direction_deg, slew_1, slew_2)
