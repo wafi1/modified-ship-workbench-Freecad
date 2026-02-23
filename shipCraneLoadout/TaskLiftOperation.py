@@ -40,21 +40,23 @@ class SingleHookLift:
         warning = ""
 
         if crane.UseLoadStages:
+            # FIX: All Stage properties explicitly cast to float to avoid
+            # Base.Quantity arithmetic / format errors downstream.
             stages = [
-                (crane.Stage1_Weight, crane.Stage1_MinRadius, crane.Stage1_MaxRadius),
-                (crane.Stage2_Weight, crane.Stage2_MinRadius, crane.Stage2_MaxRadius),
-                (crane.Stage3_Weight, crane.Stage3_MinRadius, crane.Stage3_MaxRadius),
+                (float(crane.Stage1_Weight), float(crane.Stage1_MinRadius), float(crane.Stage1_MaxRadius)),
+                (float(crane.Stage2_Weight), float(crane.Stage2_MinRadius), float(crane.Stage2_MaxRadius)),
+                (float(crane.Stage3_Weight), float(crane.Stage3_MinRadius), float(crane.Stage3_MaxRadius)),
             ]
 
             found_stage = None
             for weight, r_min, r_max in stages:
                 if weight_t <= weight:
-                    radius_mm = r_max
+                    radius_mm = r_max          # now a plain Python float
                     found_stage = (weight, r_min, r_max)
                     break
 
             if found_stage is None:
-                max_capacity = max([s[0] for s in stages])
+                max_capacity = max(s[0] for s in stages)
                 return 0, False, (f"Load {weight_t:.1f}t exceeds maximum "
                                   f"capacity {max_capacity:.1f}t!")
 
@@ -100,7 +102,7 @@ class SingleHookLift:
             crane       = self.crane
             boom_len_mm = float(crane.BoomLength)
             boom_len_m  = boom_len_mm / 1000.0
-            target_r_m  = target_radius_mm / 1000.0
+            target_r_m  = float(target_radius_mm) / 1000.0   # FIX: guard against Quantity
 
             if target_r_m > boom_len_m:
                 App.Console.PrintWarning(
@@ -144,7 +146,7 @@ class SingleHookLift:
 
         self.crane.Document.recompute()
 
-        radius_m       = radius_mm / 1000.0
+        radius_m       = float(radius_mm) / 1000.0     # FIX: ensure plain float
         capacity_note  = "load capacity" if is_limited else "boom maximum"
         msg = (f"Lift configured: {weight_t:.1f}t at {radius_m:.2f}m radius "
                f"(limited by: {capacity_note})")
@@ -340,22 +342,29 @@ class SingleHookLiftDialog(QtGui.QDialog):
         self.lift_calculator = SingleHookLift(crane)
 
         if crane.UseLoadStages:
+            # FIX: Stage_Weight properties are Base.Quantity – must use float()
+            # before :.1f formatting, otherwise TypeError at runtime.
+            s1w = float(crane.Stage1_Weight)
+            s2w = float(crane.Stage2_Weight)
+            s3w = float(crane.Stage3_Weight)
+            s1r = float(crane.Stage1_MaxRadius) / 1000.0
+            s2r = float(crane.Stage2_MaxRadius) / 1000.0
+            s3r = float(crane.Stage3_MaxRadius) / 1000.0
             info = (f"<b>Mode:</b> Load stages<br>"
-                    f"<b>Stage 1:</b> {crane.Stage1_Weight:.1f}t "
-                    f"up to {float(crane.Stage1_MaxRadius)/1000:.1f}m<br>"
-                    f"<b>Stage 2:</b> {crane.Stage2_Weight:.1f}t "
-                    f"up to {float(crane.Stage2_MaxRadius)/1000:.1f}m<br>"
-                    f"<b>Stage 3:</b> {crane.Stage3_Weight:.1f}t "
-                    f"up to {float(crane.Stage3_MaxRadius)/1000:.1f}m")
+                    f"<b>Stage 1:</b> {s1w:.1f}t up to {s1r:.1f}m<br>"
+                    f"<b>Stage 2:</b> {s2w:.1f}t up to {s2r:.1f}m<br>"
+                    f"<b>Stage 3:</b> {s3w:.1f}t up to {s3r:.1f}m")
         else:
             r_min_m = float(crane.Auto_MinRadius) / 1000.0
             r_max_m = float(crane.Auto_MaxRadius) / 1000.0
-            m1 = crane.Auto_MaxWeight * r_min_m
-            m2 = crane.Auto_MinWeight * r_max_m
+            w_max   = float(crane.Auto_MaxWeight)
+            w_min   = float(crane.Auto_MinWeight)
+            m1 = w_max * r_min_m
+            m2 = w_min * r_max_m
             info = (f"<b>Mode:</b> Automatic (linear interpolation)<br>"
-                    f"<b>Point 1:</b> {crane.Auto_MaxWeight:.1f}t @ {r_min_m:.1f}m "
+                    f"<b>Point 1:</b> {w_max:.1f}t @ {r_min_m:.1f}m "
                     f"(M={m1:.0f} tm)<br>"
-                    f"<b>Point 2:</b> {crane.Auto_MinWeight:.1f}t @ {r_max_m:.1f}m "
+                    f"<b>Point 2:</b> {w_min:.1f}t @ {r_max_m:.1f}m "
                     f"(M={m2:.0f} tm)<br>"
                     f"<b>Boom length:</b> {float(crane.BoomLength)/1000:.1f}m")
 
@@ -376,7 +385,7 @@ class SingleHookLiftDialog(QtGui.QDialog):
                 f"<span style='color:red'><b>Error:</b> {warning}</span>")
             return
 
-        radius_m = radius_mm / 1000.0
+        radius_m = float(radius_mm) / 1000.0    # FIX: guard float
         luffing  = self._calculate_luffing_for_radius(radius_mm)
 
         result_text = (f"<b>Max. radius:</b> {radius_m:.2f}m<br>"
@@ -405,7 +414,7 @@ class SingleHookLiftDialog(QtGui.QDialog):
     def _calculate_luffing_for_radius(self, radius_mm):
         crane      = self.selected_crane
         boom_len_m = float(crane.BoomLength) / 1000.0
-        radius_m   = radius_mm / 1000.0
+        radius_m   = float(radius_mm) / 1000.0     # FIX: guard float
         if radius_m >= boom_len_m:
             return 0.0
         cos_luff = radius_m / boom_len_m
@@ -430,14 +439,19 @@ class SingleHookLiftDialog(QtGui.QDialog):
             lift_c2 = SingleHookLift(c2)
 
             if cw_hook > 0:
+                # Tandem: second crane lifts its own share of the load
                 ok2, msg2, _ = lift_c2.execute_lift(cw_hook, cw_slew)
                 if not ok2:
                     App.Console.PrintWarning(
                         f"  {c2.Label} tandem positioning: {msg2}\n")
             else:
-                r_max = (float(c2.Auto_MaxRadius)
-                         if not c2.UseLoadStages
-                         else float(c2.Stage3_MaxRadius))
+                # Counterweight: extend boom to maximum radius
+                # FIX: Both branches already use float() – safe for stages and auto
+                if c2.UseLoadStages:
+                    r_max = float(c2.Stage3_MaxRadius)
+                else:
+                    r_max = float(c2.Auto_MaxRadius)
+
                 lift_c2.set_boom_to_radius(r_max)
                 c2.SlewAngle = cw_slew
                 c2.Document.recompute()
