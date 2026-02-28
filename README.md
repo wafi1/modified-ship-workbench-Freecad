@@ -11,3 +11,4 @@ Main difference to the old one, now own projects can be loaded and imported and 
   a ship model ShipDesign1.FCStd incl cranes and a pdf report is added GZ_Stability_Report__–__click_Save_(toolbar)_to_export_as_PDF.pdf
 
 still a problem is to create the hull. Up to now no idea to use nurb or Bspline surfaces on imported structures.
+* 28.2. two files changed: CalculateLoadCondition.py and CraneSpreadsheetTools.py forced calculation sequence
