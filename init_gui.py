@@ -2,6 +2,7 @@
 #***************************************************************************
 #*                                                                         *
 #*   Copyright (c) 2011, 2016 Jose Luis Cercos Pita <jlcercos@gmail.com>   *
+#*   Copyright (c) 2024, 2025 Peter Gottwald <yachtdesign@peter-gottwald.de>            *
 #*                                                                         *
 #*   This program is free software; you can redistribute it and/or modify  *
 #*   it under the terms of the GNU Lesser General Public License (LGPL)    *
@@ -20,7 +21,6 @@
 #*   USA                                                                   *
 #*                                                                         *
 #***************************************************************************
-
 import FreeCADGui as Gui
 import FreeCAD as App
 import os
@@ -91,6 +91,10 @@ class ShipWorkbench(Gui.Workbench):
             "Ship_TandemLift",       # Tandem Lift
             "Ship_StabilityMonitor", # NEU: Stabilitäts-Monitor
         ]
+
+        rigginglist = [
+            "Ship_StandaloneRigging",
+        ]
         
         resistancelist = [
             "Ship_ResistanceAmadeo",
@@ -111,6 +115,7 @@ class ShipWorkbench(Gui.Workbench):
         self.appendToolbar(QT_TRANSLATE_NOOP("Workbench", "Crane"), cranelist)
         self.appendToolbar(QT_TRANSLATE_NOOP("Workbench", "Resistance"), resistancelist)
         self.appendToolbar(QT_TRANSLATE_NOOP("Workbench", "Seakeeping"), seakeepinglist)
+        self.appendToolbar(QT_TRANSLATE_NOOP("Workbench", "Rigging"), rigginglist)
         
         # Menüs erstellen
         self.appendMenu(QT_TRANSLATE_NOOP("Workbench", "Ship design"), shiplist)
@@ -118,6 +123,7 @@ class ShipWorkbench(Gui.Workbench):
         self.appendMenu(QT_TRANSLATE_NOOP("Workbench", "Crane"), cranelist)
         self.appendMenu(QT_TRANSLATE_NOOP("Workbench", "Resistance"), resistancelist)
         self.appendMenu(QT_TRANSLATE_NOOP("Workbench", "Seakeeping"), seakeepinglist)
+        self.appendMenu(QT_TRANSLATE_NOOP("Workbench", "Rigging"), rigginglist)
 
 
 Gui.addWorkbench(ShipWorkbench())

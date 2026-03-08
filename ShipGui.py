@@ -1,6 +1,7 @@
 #***************************************************************************
 #*                                                                         *
 #*   Copyright (c) 2011, 2016 Jose Luis Cercos Pita <jlcercos@gmail.com>   *
+#*   Copyright (c) 2024, 2025 Peter Gottwald <yachtdesign@peter-gottwald.de>            *
 #*                                                                         *
 #*   This program is free software; you can redistribute it and/or modify  *
 #*   it under the terms of the GNU Lesser General Public License (LGPL)    *
@@ -116,7 +117,42 @@ class Hydrostatics:
 
 class CreateWeight:
     def IsActive(self):
-        return bool(Selection.get_shapes()) and bool(Selection.get_doc_ships())
+        return bool(Selection.get_sfrom setuptools import setup
+import os
+from freecad.ship.compile_resources import compile_resources
+
+version_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), 
+                            "freecad", "ship", "version.py")
+with open(version_path) as fp:
+    exec(fp.read())
+    
+compile_resources()
+
+setup(name='freecad.ship',
+      version=str(__version__),
+      packages=['freecad',
+                'freecad.ship',
+                'freecad.ship.shipAreasCurve',
+                'freecad.ship.shipCapacityCurve',
+                'freecad.ship.shipCreateLoadCondition',
+                'freecad.ship.shipCreateShip',
+                'freecad.ship.shipCreateTank',
+                'freecad.ship.shipCreateWeight',
+                'freecad.ship.shipGZ',
+                'freecad.ship.shipHydrostatics',
+                'freecad.ship.shipLoadExample',
+                'freecad.ship.shipSinkAndTrim',
+                'freecad.ship.seakeepingSetMesh',
+                'freecad.ship.seakeepingRAOs',
+                'freecad.ship.shipUtils',
+                ],
+      maintainer="sanguinariojoe",
+      maintainer_email="jlcercos@gmail.com",
+      url="https://github.com/FreeCAD/ship",
+      description="externalized ship workbench. Created by Jose Luis Cercos Pita",
+      install_requires=['numpy', 'scipy', 'capytaine', ],
+      include_package_data=True)
+hapes()) and bool(Selection.get_doc_ships())
 
     def Activated(self):
         from . import shipCreateWeight
@@ -589,6 +625,32 @@ class StabilityMonitorCmd:
         return {'Pixmap': 'Ship_Monitor', 'MenuText': MenuText, 'ToolTip': ToolTip}
 
 
+
+class StandaloneRigging:
+    def IsActive(self):
+        return True   # kein Dokument nötig – standalone
+
+    def Activated(self):
+        try:
+            from .shipCraneLoadout.lifting_arrangement_standalone import show
+            show()
+        except Exception as e:
+            FreeCAD.Console.PrintError(f"StandaloneRigging error: {e}\n")
+            import traceback
+            traceback.print_exc()
+
+    def GetResources(self):
+        import os
+        icon_path = os.path.join(os.path.dirname(__file__),
+                                 'shipCraneLoadout', 'rigging_icon.svg')
+        MenuText = QT_TRANSLATE_NOOP('Ship_StandaloneRigging', 'Lifting Arrangement')
+        ToolTip  = QT_TRANSLATE_NOOP('Ship_StandaloneRigging', 'Standalone rigging design without ship context')
+        return {
+            'Pixmap':   'rigging_icon',
+            'MenuText': MenuText,
+            'ToolTip':  ToolTip,
+        }
+
 # ===========================================================================
 # Command-Registrierung
 # ===========================================================================
@@ -618,3 +680,4 @@ FreeCADGui.addCommand('Ship_DecoupleCrane',             DecoupleCrane())
 FreeCADGui.addCommand('Ship_SingleHookLift',            SingleHookLift())
 FreeCADGui.addCommand('Ship_TandemLift',                TandemLift())
 FreeCADGui.addCommand('Ship_StabilityMonitor',          StabilityMonitorCmd())
+FreeCADGui.addCommand('Ship_StandaloneRigging', StandaloneRigging())
