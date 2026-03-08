@@ -1,3 +1,26 @@
+#***************************************************************************
+#*                                                                         *
+#*   Copyright (c) 2011, 2016 Jose Luis Cercos Pita <jlcercos@gmail.com>   *
+#*   Copyright (c) 2024, 2025 Peter Gottwald <yachtdesign@peter-gottwald.de>            *
+#*                                                                         *
+#*   This program is free software; you can redistribute it and/or modify  *
+#*   it under the terms of the GNU Lesser General Public License (LGPL)    *
+#*   as published by the Free Software Foundation; either version 2 of     *
+#*   the License, or (at your option) any later version.                   *
+#*   for detail see the LICENCE text file.                                 *
+#*                                                                         *
+#*   This program is distributed in the hope that it will be useful,       *
+#*   but WITHOUT ANY WARRANTY; without even the implied warranty of        *
+#*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the         *
+#*   GNU Library General Public License for more details.                  *
+#*                                                                         *
+#*   You should have received a copy of the GNU Library General Public     *
+#*   License along with this program; if not, write to the Free Software   *
+#*   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  *
+#*   USA                                                                   *
+#*                                                                         *
+#***************************************************************************
+
 import math
 import FreeCAD as App
 from FreeCAD import Units
@@ -65,7 +88,6 @@ def load_hydrostatics_spreadsheet(doc):
     J: Cf
     K: Cm
     """
-    # Suche Hydrostatics Spreadsheet
     hydro_sheet = None
     for obj in doc.Objects:
         if obj.TypeId == "Spreadsheet::Sheet":
@@ -75,47 +97,59 @@ def load_hydrostatics_spreadsheet(doc):
                 App.Console.PrintMessage(
                     f"Hydrostatics Spreadsheet gefunden: {obj.Label}\n")
                 break
-    
+
     if not hydro_sheet:
         App.Console.PrintError(
             "Kein Hydrostatics-Spreadsheet gefunden!\n"
             "Bitte zuerst das Hydrostatik-Modul ausfuehren.\n")
         return None
-    
-    # Daten einlesen - Header in Zeile 1, Daten ab Zeile 2
+
+    # ── safe_float VOR allem anderen definieren ──────────────────────────
+    def safe_float(cell, default=0.0):
+        try:
+            v = hydro_sheet.get(cell)
+            return float(v) if v and str(v).strip() else default
+        except:
+            return default
+
+    # ── Debug: Spaltenstruktur einmalig ausgeben ──────────────────────────
+    App.Console.PrintMessage(
+        "DEBUG Spalten Zeile 2:\n"
+        "  A(Disp)={}  B(Draft)={}  C(Wet)={}\n"
+        "  D(TMC)={}   E(Farea)={}  F(KBl)={}\n"
+        "  G(KBt?)={}  H(BMt?)={}   I(Cb)={}\n"
+        "  → kmt = G+H = {:.3f}\n".format(
+            hydro_sheet.get('A2'), hydro_sheet.get('B2'),
+            hydro_sheet.get('C2'), hydro_sheet.get('D2'),
+            hydro_sheet.get('E2'), hydro_sheet.get('F2'),
+            hydro_sheet.get('G2'), hydro_sheet.get('H2'),
+            hydro_sheet.get('I2'),
+            safe_float('G2') + safe_float('H2')))
+
+    # ── Daten einlesen ────────────────────────────────────────────────────
     points = []
     row = 2
-    
+
     while True:
         try:
-            # Erste Spalte pruefen ob Daten vorhanden
             val_a = hydro_sheet.get(f'A{row}')
             if not val_a or str(val_a).strip() == '':
                 break
-            
-            # Alle Spalten lesen
-            disp_t  = float(hydro_sheet.get(f'A{row}'))
-            draft   = float(hydro_sheet.get(f'B{row}'))
-            
-            # Optionale Spalten mit Fallback
-            def safe_float(cell, default=0.0):
-                try:
-                    v = hydro_sheet.get(cell)
-                    return float(v) if v and str(v).strip() else default
-                except:
-                    return default
-            
-            wet     = safe_float(f'C{row}')
-            tmc     = safe_float(f'D{row}')
-            farea   = safe_float(f'E{row}')
-            kbl     = safe_float(f'F{row}')  # LCB
-            kbt     = safe_float(f'G{row}')  # KB transversal
-            bmt     = safe_float(f'H{row}')  # BM transversal
-            kmt     = kbt + bmt              # KM = KB + BM
-            cb      = safe_float(f'I{row}')
-            cf      = safe_float(f'J{row}')
-            cm      = safe_float(f'K{row}')
-            
+
+            disp_t = float(hydro_sheet.get(f'A{row}'))
+            draft  = float(hydro_sheet.get(f'B{row}'))
+
+            wet   = safe_float(f'C{row}')
+            tmc   = safe_float(f'D{row}')
+            farea = safe_float(f'E{row}')
+            kbl   = safe_float(f'F{row}')  # LCB
+            kbt   = safe_float(f'G{row}')  # KB transversal
+            bmt   = safe_float(f'H{row}')  # BM transversal
+            kmt   = kbt + bmt              # KM = KB + BM
+            cb    = safe_float(f'I{row}')
+            cf    = safe_float(f'J{row}')
+            cm    = safe_float(f'K{row}')
+
             points.append({
                 'disp_t': disp_t,
                 'draft':  draft,
@@ -130,21 +164,20 @@ def load_hydrostatics_spreadsheet(doc):
                 'cf':     cf,
                 'cm':     cm,
             })
-            
+
             row += 1
-            
+
         except Exception as e:
             App.Console.PrintWarning(f"  Zeile {row}: {e}\n")
             break
-    
+
     App.Console.PrintMessage(f"  {len(points)} Hydrostatik-Punkte geladen\n")
-    
+
     if len(points) < 2:
         App.Console.PrintError(
             "Zu wenige Punkte im Hydrostatics-Spreadsheet!\n")
         return None
-    
-    # Nach Tiefgang sortieren
+
     points.sort(key=lambda x: x['draft'])
     return points
 

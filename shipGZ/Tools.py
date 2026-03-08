@@ -1,6 +1,25 @@
 #***************************************************************************
-#*   Copyright (c) 2011, 2016 Jose Luis Cercos Pita <jlcercos@gmail.com>   *
 #*                                                                         *
+#*   Copyright (c) 2011, 2016 Jose Luis Cercos Pita <jlcercos@gmail.com>   *
+#*   Copyright (c) 2024, 2025 Peter Gottwald <yachtdesign@peter-gottwald.de>            *
+#*                                                                         *
+#*   This program is free software; you can redistribute it and/or modify  *
+#*   it under the terms of the GNU Lesser General Public License (LGPL)    *
+#*   as published by the Free Software Foundation; either version 2 of     *
+#*   the License, or (at your option) any later version.                   *
+#*   for detail see the LICENCE text file.                                 *
+#*                                                                         *
+#*   This program is distributed in the hope that it will be useful,       *
+#*   but WITHOUT ANY WARRANTY; without even the implied warranty of        *
+#*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the         *
+#*   GNU Library General Public License for more details.                  *
+#*                                                                         *
+#*   You should have received a copy of the GNU Library General Public     *
+#*   License along with this program; if not, write to the Free Software   *
+#*   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  *
+#*   USA                                                                   *
+#*                                                                         *
+#***************************************************************************
 #*   FIXED:                                                                *
 #*   BUG 1: Units.Quantity(val, "rad") → val * Units.Radian               *
 #*   BUG 2: Same fix in var_trim=False branch                              *
@@ -204,6 +223,14 @@ def gz(lc, rolls, var_trim=True):
         W   = Units.parseQuantity("{} kg".format(total_mass_kg)) * G
         COG = _parse_cog_from_sheet(lc)
 
+        COG = _parse_cog_from_sheet(lc)
+
+        # DEBUG - bitte prüfen:
+        App.Console.PrintMessage(
+            "DEBUG COG: x={:.1f}mm, y={:.1f}mm, z={:.1f}mm  "
+            "(= KG: {:.3f} m)\n".format(
+                COG.x, COG.y, COG.z, COG.z/1000.0))
+
         try:
             fs_moment = float(lc.get('K4'))
         except Exception:
@@ -268,6 +295,12 @@ def solve_point_direct(W, COG, ship, roll, var_trim=True):
 
     for i in range(MAX_EQUILIBRIUM_ITERS):
         disp_mass, B, _ = Hydrostatics.displacement(ship, draft, roll, trim)
+        App.Console.PrintMessage(
+            "DEBUG B.z={:.1f}mm (KB={:.3f}m), COG.z={:.1f}mm (KG={:.3f}m), "
+            "R_z={:.1f}mm\n".format(
+                B.z, B.z/1000.0, 
+                COG.z, COG.z/1000.0,
+                (COG.z - B.z)))
         disp = disp_mass * G
 
         if B.x == 0.0 and B.y == 0.0 and B.z == 0.0 and disp_mass.Value == 0.0:
@@ -331,6 +364,16 @@ def solve_point_direct(W, COG, ship, roll, var_trim=True):
         disp_mass_kg = float(disp_mass.getValueAs('kg').Value)
     except Exception:
         disp_mass_kg = 0.0
+
+    # Am Ende von solve_point_direct, vor dem return:
+    App.Console.PrintMessage(
+        "DEBUG FINAL roll={:.1f}deg: "
+        "R_y={:.1f}mm  R_z={:.1f}mm  "
+        "GZ_code={:.4f}m  GZ_simple=R_y_only={:.4f}m\n".format(
+            roll.getValueAs('deg').Value,
+            R_y.Value, R_z.Value,
+            (c * R_y - s * R_z).Value / 1000.0,
+            R_y.Value / 1000.0))   # ← zum Vergleich: reiner Weltkoordinaten-GZ
     return c * R_y - s * R_z, draft, trim, disp_mass_kg
 
 
